@@ -1,0 +1,144 @@
+# =============================================================================
+# STM32 / Embedded build artifacts
+# =============================================================================
+
+*.o
+*.obj
+*.ko
+*.elf
+*.out
+*.axf
+*.bin
+*.hex
+*.srec
+*.s19
+*.mot
+*.map
+*.lst
+*.lss
+*.sym
+*.a
+*.lib
+*.d
+*.dep
+
+# =============================================================================
+# CMake / Ninja
+# =============================================================================
+
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+
+# =============================================================================
+# IDE & editors
+# =============================================================================
+
+# CLion / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code (keep shared settings if you use them)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# STM32CubeIDE / Eclipse
+.metadata/
+.settings/
+.project
+.cproject
+*.launch
+RemoteSystemsTempFiles/
+
+# Keil MDK-ARM
+*.uvguix.*
+*.uvoptx
+*.uvprojx
+*.crf
+*.htm
+*.lnp
+*.plg
+*.tra
+*.bak
+*.ddk
+*.edk
+*.mpf
+*.mpj
+*.omf
+*.rpt
+*.tmp
+*.__i
+*._ia
+*._ii
+*.build_log.htm
+*.iex
+RTE/
+
+# IAR EWARM
+settings/
+*.ewd
+*.ewp
+*.eww
+*.ewt
+*.pbi
+*.pbd
+*.browse
+*.xcl
+*.dbgdt
+*.wsdt
+
+# =============================================================================
+# STM32CubeMX (keep .ioc, ignore temp)
+# =============================================================================
+
+*.mxproject
+*.bak.ioc
+
+# =============================================================================
+# OS & misc
+# =============================================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+*.tmp
+*.temp
+
+# =============================================================================
+# Secrets & local config
+# =============================================================================
+
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+/Drivers/
+/Middlewares/
+
+# =============================================================================
+# owned by STM32CubeMX
+# =============================================================================
+*.ioc
