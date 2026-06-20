@@ -44,6 +44,25 @@ add_subdirectory(cmake/stm32cubemx)
 add_subdirectory(cmake/Third_Party/lua51)
 add_subdirectory(cmake/Third_Party/littlefs)
 
+# Board pin map: CSV -> generated C (see tools/pinmap/)
+set(TARS_BOARD_ID "stm32f429i-disc1")
+set(TARS_PINMAP_CSV "${CMAKE_SOURCE_DIR}/tools/pinmap/${TARS_BOARD_ID}.csv")
+set(TARS_PINMAP_GEN_DIR "${CMAKE_SOURCE_DIR}/generated/pinmap")
+set(TARS_PINMAP_GEN_C "${TARS_PINMAP_GEN_DIR}/${TARS_BOARD_ID}.c")
+
+add_custom_command(
+    OUTPUT ${TARS_PINMAP_GEN_C}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TARS_PINMAP_GEN_DIR}
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/pinmap/pinmap-gen.py
+            ${TARS_PINMAP_CSV} -o ${TARS_PINMAP_GEN_C}
+    DEPENDS ${TARS_PINMAP_CSV} ${CMAKE_SOURCE_DIR}/tools/pinmap/pinmap-gen.py
+    COMMENT "Generating pin map ${TARS_BOARD_ID}.c"
+    VERBATIM
+)
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${TARS_PINMAP_GEN_C})
+set_source_files_properties(${TARS_PINMAP_GEN_C} PROPERTIES GENERATED TRUE)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths

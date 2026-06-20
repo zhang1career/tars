@@ -67,4 +67,7 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 /* MVP: Lua apps only. Native .tapp install/run disabled until post-MVP. */
 #define TARS_MVP_LUA_ONLY         1
 
+/* Board pin map: tools/pinmap/<board>.csv -> generated/pinmap/ at build time. */
+#define TARS_BOARD_ID             "stm32f429i-disc1"
+
 #endif /* TARS_PLATFORM_H */

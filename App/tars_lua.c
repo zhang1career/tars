@@ -87,12 +87,12 @@ void TarsLua_Init(void)
 static int l_tars_gpio_write(lua_State *L)
 {
   const tars_api_t *api = TarsApp_GetApi();
-  uint32_t pin = (uint32_t)luaL_checkinteger(L, 1);
+  const char *pin_name = luaL_checkstring(L, 1);
   int val = (int)luaL_checkinteger(L, 2);
 
   if (api != NULL && api->gpio_write != NULL)
   {
-    api->gpio_write(pin, val);
+    api->gpio_write(pin_name, val);
   }
 
   return 0;
@@ -101,12 +101,12 @@ static int l_tars_gpio_write(lua_State *L)
 static int l_tars_gpio_read(lua_State *L)
 {
   const tars_api_t *api = TarsApp_GetApi();
-  uint32_t pin = (uint32_t)luaL_checkinteger(L, 1);
+  const char *pin_name = luaL_checkstring(L, 1);
   int val = 0;
 
   if (api != NULL && api->gpio_read != NULL)
   {
-    val = api->gpio_read(pin);
+    val = api->gpio_read(pin_name);
   }
 
   lua_pushinteger(L, val);

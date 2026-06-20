@@ -4,6 +4,7 @@
 #include "tars_storage.h"
 #include "tars_lua.h"
 #include "tars_platform.h"
+#include "tars_builtin_apps.h"
 #include "lcd_log.h"
 #include "cmsis_os.h"
 #include <stdio.h>
@@ -216,7 +217,6 @@ static void registry_run_timeslice(uint8_t timeslice)
 
   if (s_runtime[(uint32_t)idx].app_type == TARS_APP_TYPE_NATIVE)
   {
-#if !TARS_MVP_LUA_ONLY
     uint32_t j;
 
     for (j = 0U; j < s_builtin_count; j++)
@@ -227,14 +227,12 @@ static void registry_run_timeslice(uint8_t timeslice)
         {
           s_builtins[j].tick();
         }
-        break;
+        return;
       }
     }
 
-    if (j >= s_builtin_count)
-    {
-      (void)TarsApp_RunOnce(s_runtime[(uint32_t)idx].name);
-    }
+#if !TARS_MVP_LUA_ONLY
+    (void)TarsApp_RunOnce(s_runtime[(uint32_t)idx].name);
 #endif
   }
   else if (s_runtime[(uint32_t)idx].app_type == TARS_APP_TYPE_LUA)
@@ -363,7 +361,7 @@ void TarsApp_RegisterBuiltin(const tars_builtin_app_t *app)
   s_runtime[s_runtime_count].app_type = TARS_APP_TYPE_NATIVE;
   s_runtime[s_runtime_count].timeslice = registry_normalize_timeslice(app->timeslice);
   s_runtime[s_runtime_count].priority = TARS_SCHED_DEFAULT_PRI;
-  s_runtime[s_runtime_count].submitted = 0U;
+  s_runtime[s_runtime_count].submitted = 1U;
   s_runtime[s_runtime_count].loaded = 1U;
   s_runtime[s_runtime_count].manifest = app->manifest;
   s_runtime[s_runtime_count].entry = NULL;
@@ -505,11 +503,6 @@ tars_status_t TarsApp_Submit(const char *name)
   uint32_t i;
   tars_status_t status;
 
-  if (storage_idx < 0)
-  {
-    return TARS_ERR_NOT_FOUND;
-  }
-
   for (i = 0U; i < s_runtime_count; i++)
   {
     if (strcmp(s_runtime[i].name, name) != 0)
@@ -525,6 +518,7 @@ tars_status_t TarsApp_Submit(const char *name)
 
     s_runtime[i].submitted = 1U;
 
+    if (storage_idx >= 0)
     {
       tars_storage_entry_t entry = *(const tars_storage_entry_t *)TarsStorage_GetEntry((uint32_t)storage_idx);
       entry.submitted = 1U;
@@ -727,6 +721,7 @@ void TarsApp_SchedulerTask(void const *argument)
   if (s_app_ready == 0U)
   {
     TarsApp_Init();
+    TarsBuiltin_RegisterAll();
     s_app_ready = 1U;
   }
 

@@ -4,6 +4,7 @@
 #include "tars_ota.h"
 #include "tars_hal.h"
 #include "tars_sys.h"
+#include "tars_mcu.h"
 #include "usb_device.h"
 #include "usbd_cdc.h"
 #include "tars_app.h"
@@ -281,8 +282,9 @@ static void shell_execute_line(void)
       "  help              Show this help\r\n"
       "  status            Show USB role and link state\r\n"
       "  echo              Echo arguments\r\n"
-      "  gpio write <13|14> <0|1>  LD3/LD4 (0=on)\r\n"
-      "  gpio read <13|14> Read LD3/LD4 state\r\n"
+      "  mcu               MCU info (try mcu help)\r\n"
+      "  mcu gpio write pg13 0   LD3 on (active low)\r\n"
+      "  mcu gpio read pg13      Read GPIO level\r\n"
       "  app list          List installed apps\r\n"
       "  app catalog       Show flash catalog status\r\n"
       "  app slots         Show native slot map\r\n"
@@ -322,47 +324,18 @@ static void shell_execute_line(void)
     shell_write_str(s_line + 5);
     shell_write_str("\r\n");
   }
-  else if (strncmp(s_line, "gpio write ", 11) == 0)
+  else if (strncmp(s_line, "mcu", 3) == 0 && (s_line[3] == '\0' || s_line[3] == ' '))
   {
-    const tars_api_t *api = TarsApp_GetApi();
-    unsigned long pin = 0UL;
-    unsigned long val = 0UL;
-    char msg[48];
+    char buffer[512];
+    const char *args = (s_line[3] == ' ') ? (s_line + 4) : "";
 
-    if (sscanf(s_line + 11, "%lu %lu", &pin, &val) != 2)
+    if (TarsMcu_ShellHandle(args, buffer, sizeof(buffer)) != 0)
     {
-      shell_write_str("gpio write: use gpio write <13|14> <0|1>\r\n");
-    }
-    else if (api == NULL || api->gpio_write == NULL)
-    {
-      shell_write_str("gpio write: unavailable\r\n");
+      shell_write_str(buffer);
     }
     else
     {
-      api->gpio_write((uint32_t)pin, (int)val);
-      (void)snprintf(msg, sizeof(msg), "gpio write: pin=%lu val=%lu\r\n", pin, val);
-      shell_write_str(msg);
-    }
-  }
-  else if (strncmp(s_line, "gpio read ", 10) == 0)
-  {
-    const tars_api_t *api = TarsApp_GetApi();
-    unsigned long pin = 0UL;
-    char msg[48];
-
-    if (sscanf(s_line + 10, "%lu", &pin) != 1)
-    {
-      shell_write_str("gpio read: use gpio read <13|14>\r\n");
-    }
-    else if (api == NULL || api->gpio_read == NULL)
-    {
-      shell_write_str("gpio read: unavailable\r\n");
-    }
-    else
-    {
-      int val = api->gpio_read((uint32_t)pin);
-      (void)snprintf(msg, sizeof(msg), "gpio read: pin=%lu val=%d\r\n", pin, val);
-      shell_write_str(msg);
+      shell_write_str("mcu: unknown subcommand (try mcu help)\r\n");
     }
   }
   else if (shell_str_eq(s_line, "app list"))

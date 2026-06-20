@@ -1,0 +1,21 @@
+@board,stm32f429i-disc1
+@mcu,stm32f429
+@package,lqfp176
+
+# Peripheral signal routing (signal names are MCU-generic).
+[periph]
+signal,pin
+tim1_ch1,pa8
+tim1_ch2,pa9
+tim1_ch3,pa10
+tim1_ch4,pa11
+usart1_tx,pa9
+usart1_rx,pa10
+i2c1_scl,pb6
+i2c1_sda,pb9
+
+# GPIO pins exposed to shell/API (pin name + optional board alias).
+[gpio]
+pin,alias
+pg13,ld3
+pg14,ld4

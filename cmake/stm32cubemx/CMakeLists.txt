@@ -13,6 +13,7 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/mcu
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Utilities/Fonts
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/lua51
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/littlefs
@@ -45,6 +46,9 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/usb_otg.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/shell.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_api.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/mcu/tars_mcu_gpio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/mcu/tars_mcu_shell.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/mcu/tars_mcu_pinmap.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_vfs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_crc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_loader.c
@@ -56,9 +60,14 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_lua.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_ota.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_hal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_motor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_builtin_apps.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/apps/app_motor_ctl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/apps/app_viewport.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_sys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_io.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_log.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_viewport.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/ili9341.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Utilities/Fonts/font8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/main.c

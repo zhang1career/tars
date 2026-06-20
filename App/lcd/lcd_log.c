@@ -1,4 +1,5 @@
 #include "lcd_log.h"
+#include "lcd_viewport.h"
 #include "ili9341.h"
 #include "ltdc.h"
 #include "fonts.h"
@@ -133,6 +134,59 @@ static void lcd_draw_header(void)
   lcd_draw_string(4U, 2U, s_status_banner);
 }
 
+static void lcd_redraw_log_region(void);
+static int lcd_log_should_draw(void);
+
+static int lcd_log_should_draw(void)
+{
+  return LcdViewport_IsLogPageActive();
+}
+
+void LcdLog_RedrawLogRegion(void)
+{
+  lcd_redraw_log_region();
+}
+
+void LcdLog_Lock(void)
+{
+  lcd_log_lock();
+}
+
+void LcdLog_Unlock(void)
+{
+  lcd_log_unlock();
+}
+
+void LcdLog_DrawString(uint16_t x, uint16_t y, const char *text)
+{
+  lcd_draw_string(x, y, text);
+}
+
+void LcdLog_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
+{
+  lcd_fill_rect(x, y, w, h, color);
+}
+
+uint16_t LcdLog_GetWidth(void)
+{
+  return LCD_WIDTH;
+}
+
+uint16_t LcdLog_GetHeight(void)
+{
+  return LCD_HEIGHT;
+}
+
+uint16_t LcdLog_GetLogTop(void)
+{
+  return LCD_LOG_TOP;
+}
+
+uint16_t LcdLog_GetBgColor(void)
+{
+  return s_bg_color;
+}
+
 static void lcd_redraw_log_region(void)
 {
   uint16_t start = 0U;
@@ -180,6 +234,7 @@ void LcdLog_Init(void)
   ili9341_Init();
   lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, s_bg_color);
   lcd_draw_header();
+  LcdViewport_Init();
   MX_LTDC_Init();
   (void)HAL_LTDC_ProgramLineEvent(&hltdc, (uint32_t)(LCD_HEIGHT - 1U));
   ili9341_DisplayOn();
@@ -208,8 +263,13 @@ void LcdLog_Clear(void)
   lcd_log_lock();
   s_log_count = 0U;
   memset(s_log_lines, 0, sizeof(s_log_lines));
-  lcd_wait_vblank();
-  lcd_fill_rect(0U, LCD_LOG_TOP, LCD_WIDTH, (uint16_t)(LCD_HEIGHT - LCD_LOG_TOP), s_bg_color);
+
+  if (lcd_log_should_draw() != 0)
+  {
+    lcd_wait_vblank();
+    lcd_fill_rect(0U, LCD_LOG_TOP, LCD_WIDTH, (uint16_t)(LCD_HEIGHT - LCD_LOG_TOP), s_bg_color);
+  }
+
   lcd_log_unlock();
 }
 
@@ -227,14 +287,22 @@ void LcdLog_WriteLine(const char *line)
     strncpy(s_log_lines[s_log_count], line, LCD_LOG_COLS);
     s_log_lines[s_log_count][LCD_LOG_COLS] = '\0';
     s_log_count++;
-    lcd_draw_log_line((uint16_t)(s_log_count - 1U), s_log_lines[s_log_count - 1U]);
+
+    if (lcd_log_should_draw() != 0)
+    {
+      lcd_draw_log_line((uint16_t)(s_log_count - 1U), s_log_lines[s_log_count - 1U]);
+    }
   }
   else
   {
     memmove(s_log_lines[0], s_log_lines[1], sizeof(s_log_lines[0]) * (LCD_LOG_ROWS - 1U));
     strncpy(s_log_lines[LCD_LOG_ROWS - 1U], line, LCD_LOG_COLS);
     s_log_lines[LCD_LOG_ROWS - 1U][LCD_LOG_COLS] = '\0';
-    lcd_redraw_log_region();
+
+    if (lcd_log_should_draw() != 0)
+    {
+      lcd_redraw_log_region();
+    }
   }
 
   lcd_log_unlock();

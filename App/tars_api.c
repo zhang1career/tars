@@ -1,55 +1,26 @@
 #include "tars_app.h"
 #include "tars_api.h"
+#include "tars_mcu.h"
 #include "tars_vfs.h"
-#include "main.h"
 #include "cmsis_os.h"
 
 static tars_api_t s_api;
 
-static void api_gpio_write(uint32_t pin_id, int value)
+static void api_gpio_write(const char *pin_name, int value)
 {
-  GPIO_TypeDef *port = NULL;
-  uint16_t pin = 0U;
-
-  if (pin_id == 13U)
-  {
-    port = LD3_GPIO_Port;
-    pin = LD3_Pin;
-  }
-  else if (pin_id == 14U)
-  {
-    port = LD4_GPIO_Port;
-    pin = LD4_Pin;
-  }
-  else
-  {
-    return;
-  }
-
-  HAL_GPIO_WritePin(port, pin, (value != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  (void)TarsMcu_GpioWrite(pin_name, value);
 }
 
-static int api_gpio_read(uint32_t pin_id)
+static int api_gpio_read(const char *pin_name)
 {
-  GPIO_TypeDef *port = NULL;
-  uint16_t pin = 0U;
+  int value = 0;
 
-  if (pin_id == 13U)
-  {
-    port = LD3_GPIO_Port;
-    pin = LD3_Pin;
-  }
-  else if (pin_id == 14U)
-  {
-    port = LD4_GPIO_Port;
-    pin = LD4_Pin;
-  }
-  else
+  if (TarsMcu_GpioRead(pin_name, &value) != 0)
   {
     return 0;
   }
 
-  return (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1 : 0;
+  return value;
 }
 
 static void api_sleep_ms(uint32_t ms)
