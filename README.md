@@ -7,7 +7,7 @@ Discovery board (`STM32F429I-DISC1`): USB CDC shell, LittleFS, **Lua 5.1** apps.
 ## Quick start
 
 ```bash
-cmake --preset Debug && cmake --build cmake-build-debug
+cmake --preset Release && cmake --build build/Release
 ./tools/flash.sh
 
 python3 tools/tars-pack.py lua tools/examples/hello.lua \

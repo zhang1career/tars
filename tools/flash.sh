@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT/cmake-build-debug}"
+BUILD_DIR="${BUILD_DIR:-$ROOT/build/Release}"
 ELF="$BUILD_DIR/tars.elf"
 CFG="$ROOT/openocd.cfg"
 TCL="$ROOT/tools/openocd-flash-partition.tcl"
@@ -30,7 +30,7 @@ Usage: $(basename "$0") [--full|--partition]
   --help        Show this help
 
 Environment:
-  BUILD_DIR          CMake build dir (default: cmake-build-debug)
+  BUILD_DIR          CMake build dir (default: build/Release)
   FW_BASE            Firmware load address (default: 0x08000000)
   FW_FIRST_SECTOR    First sector to erase (default: 0)
   FW_LAST_SECTOR     Last sector to erase (default: 6)
@@ -71,7 +71,16 @@ if [[ ! -f "$TCL" ]]; then
   exit 1
 fi
 
-echo "==> build (Debug)"
+if [[ ! -f "$BUILD_DIR/build.ninja" && ! -f "$BUILD_DIR/Makefile" ]]; then
+  if ! command -v cmake >/dev/null 2>&1; then
+    echo "missing build dir $BUILD_DIR and cmake not found" >&2
+    exit 1
+  fi
+  echo "==> configure (Release)"
+  cmake --preset Release
+fi
+
+echo "==> build (Release)"
 if command -v cmake >/dev/null 2>&1; then
   cmake --build "$BUILD_DIR" --target tars
 elif [[ -f "$BUILD_DIR/build.ninja" ]] && command -v ninja >/dev/null 2>&1; then
