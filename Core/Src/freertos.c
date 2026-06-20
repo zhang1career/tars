@@ -1,381 +1,144 @@
 /* USER CODE BEGIN Header */
-
 /**
-
   ******************************************************************************
-
   * File Name          : freertos.c
-
   * Description        : Code for freertos applications
-
   ******************************************************************************
-
   * @attention
-
   *
-
   * Copyright (c) 2026 STMicroelectronics.
-
   * All rights reserved.
-
   *
-
   * This software is licensed under terms that can be found in the LICENSE file
-
   * in the root directory of this software component.
-
   * If no LICENSE file comes with this software, it is provided AS-IS.
-
   *
-
   ******************************************************************************
-
   */
-
 /* USER CODE END Header */
 
-
-
 /* Includes ------------------------------------------------------------------*/
-
 #include "FreeRTOS.h"
-
 #include "task.h"
-
 #include "main.h"
-
 #include "cmsis_os.h"
 
-
-
 /* Private includes ----------------------------------------------------------*/
-
 /* USER CODE BEGIN Includes */
-
 #include "usb_otg.h"
-
 #include "shell.h"
-
 #include "lcd_log.h"
-
+#include "tars_app.h"
+#include "tars_lua.h"
 /* USER CODE END Includes */
 
-
-
-/* Private typedef -----------------------------------------------------------*/
-
-/* USER CODE BEGIN PTD */
-
-
-
-/* USER CODE END PTD */
-
-
-
-/* Private define ------------------------------------------------------------*/
-
-/* USER CODE BEGIN PD */
-
-
-
-/* USER CODE END PD */
-
-
-
-/* Private macro -------------------------------------------------------------*/
-
-/* USER CODE BEGIN PM */
-
-
-
-/* USER CODE END PM */
-
-
-
 /* Private variables ---------------------------------------------------------*/
-
+osThreadId defaultTaskHandle;
+osThreadId shellTaskHandle;
 /* USER CODE BEGIN Variables */
-
-
-
+osThreadId eluaTaskHandle;
+osThreadId schedulerTaskHandle;
 /* USER CODE END Variables */
 
-osThreadId defaultTaskHandle;
-
-osThreadId shellTaskHandle;
-
-
-
 /* Private function prototypes -----------------------------------------------*/
-
-/* USER CODE BEGIN FunctionPrototypes */
-
-
-
-/* USER CODE END FunctionPrototypes */
-
-
-
 void StartDefaultTask(void const * argument);
-
 void StartShellTask(void const * argument);
-
-
+/* USER CODE BEGIN FunctionPrototypes */
+void StartEluaTask(void const * argument);
+void StartSchedulerTask(void const * argument);
+/* USER CODE END FunctionPrototypes */
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
-
-
 /* GetIdleTaskMemory prototype (linked to static allocation support) */
-
 void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize );
 
-
-
 /* Hook prototypes */
-
 void vApplicationIdleHook(void);
-
 void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
-
 void vApplicationMallocFailedHook(void);
 
-
-
 /* USER CODE BEGIN 2 */
-
 __weak void vApplicationIdleHook( void )
-
 {
-
-   /* vApplicationIdleHook() will only be called if configUSE_IDLE_HOOK is set
-
-   to 1 in FreeRTOSConfig.h. It will be called on each iteration of the idle
-
-   task. It is essential that code added to this hook function never attempts
-
-   to block in any way (for example, call xQueueReceive() with a block time
-
-   specified, or call vTaskDelay()). If the application makes use of the
-
-   vTaskDelete() API function (as this demo application does) then it is also
-
-   important that vApplicationIdleHook() is permitted to return to its calling
-
-   function, because it is the responsibility of the idle task to clean up
-
-   memory allocated by the kernel to any task that has since been deleted. */
-
 }
-
 /* USER CODE END 2 */
 
-
-
 /* USER CODE BEGIN 4 */
-
 __weak void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
-
 {
-
-   /* Run time stack overflow checking is performed if
-
-   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
-
-   called if a stack overflow is detected. */
-
   (void)xTask;
-
   (void)pcTaskName;
-
 }
-
 /* USER CODE END 4 */
 
-
-
 /* USER CODE BEGIN 5 */
-
 __weak void vApplicationMallocFailedHook(void)
-
 {
-
-   /* vApplicationMallocFailedHook() will only be called if
-
-   configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h. It is a hook
-
-   function that will get called if a call to pvPortMalloc() fails.
-
-   pvPortMalloc() is called internally by the kernel whenever a task, queue,
-
-   timer or semaphore is created. It is also called by various parts of the
-
-   demo application. If heap_1.c or heap_2.c are used, then the size of the
-
-   heap available to pvPortMalloc() is defined by configTOTAL_HEAP_SIZE in
-
-   FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
-
-   to query the size of free heap space that remains (although it does not
-
-   provide information on how the remaining heap might be fragmented). */
-
 }
-
 /* USER CODE END 5 */
 
-
-
 /* USER CODE BEGIN GET_IDLE_TASK_MEMORY */
-
 static StaticTask_t xIdleTaskTCBBuffer;
-
 static StackType_t xIdleStack[configMINIMAL_STACK_SIZE];
 
-
-
 void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize )
-
 {
-
   *ppxIdleTaskTCBBuffer = &xIdleTaskTCBBuffer;
-
   *ppxIdleTaskStackBuffer = &xIdleStack[0];
-
   *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
-
-  /* place for user code */
-
 }
-
 /* USER CODE END GET_IDLE_TASK_MEMORY */
 
-
-
 /**
-
   * @brief  FreeRTOS initialization
-
   * @param  None
-
   * @retval None
-
   */
-
 void MX_FREERTOS_Init(void) {
-
-  /* USER CODE BEGIN Init */
-
-
-
-  /* USER CODE END Init */
-
-
-
-  /* USER CODE BEGIN RTOS_MUTEX */
-
-  /* add mutexes, ... */
-
-  /* USER CODE END RTOS_MUTEX */
-
-
-
-  /* USER CODE BEGIN RTOS_SEMAPHORES */
-
-  /* add semaphores, ... */
-
-  /* USER CODE END RTOS_SEMAPHORES */
-
-
-
-  /* USER CODE BEGIN RTOS_TIMERS */
-
-  /* start timers, add new ones, ... */
-
-  /* USER CODE END RTOS_TIMERS */
-
-
-
-  /* USER CODE BEGIN RTOS_QUEUES */
-
-  /* add queues, ... */
-
-  /* USER CODE END RTOS_QUEUES */
-
-
-
   /* Create the thread(s) */
-
-  /* definition and creation of defaultTask */
-
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 2048);
-
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-
-
   osThreadDef(shellTask, StartShellTask, osPriorityBelowNormal, 0, 2048);
-
   shellTaskHandle = osThreadCreate(osThread(shellTask), NULL);
 
-
-
   /* USER CODE BEGIN RTOS_THREADS */
+  osThreadDef(eluaTask, StartEluaTask, osPriorityLow, 0, 6144);
+  eluaTaskHandle = osThreadCreate(osThread(eluaTask), NULL);
 
-  /* add threads, ... */
-
+  osThreadDef(schedulerTask, StartSchedulerTask, osPriorityLow, 0, 4096);
+  schedulerTaskHandle = osThreadCreate(osThread(schedulerTask), NULL);
   /* USER CODE END RTOS_THREADS */
-
-
-
 }
-
-
 
 /* USER CODE BEGIN Header_StartDefaultTask */
-
 /**
-
   * @brief  Function implementing the defaultTask thread.
-
   * @param  argument: Not used
-
   * @retval None
-
   */
-
 /* USER CODE END Header_StartDefaultTask */
-
 void StartDefaultTask(void const * argument)
-
 {
-
   (void)argument;
-
   LcdLog_Init();
-
   UsbOtg_Task(argument);
-
 }
-
-
 
 void StartShellTask(void const * argument)
-
 {
-
   Shell_Task(argument);
-
 }
 
-
-
-/* Private application code --------------------------------------------------*/
-
 /* USER CODE BEGIN Application */
+void StartEluaTask(void const * argument)
+{
+  TarsLua_Task(argument);
+}
 
-
-
+void StartSchedulerTask(void const * argument)
+{
+  TarsApp_SchedulerTask(argument);
+}
 /* USER CODE END Application */
-
-

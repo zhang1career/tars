@@ -18,4 +18,6 @@ void UsbOtg_StartRole(UsbOtgRole role);
 void UsbOtg_StopRole(UsbOtgRole role);
 void UsbOtg_Task(void const *argument);
 
+void UsbOtg_RecoverDeviceCdc(void);
+
 #endif /* USB_OTG_H */
