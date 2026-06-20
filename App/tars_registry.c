@@ -3,6 +3,8 @@
 #include "tars_manifest.h"
 #include "tars_storage.h"
 #include "tars_lua.h"
+#include "tars_platform.h"
+#include "lcd_log.h"
 #include "cmsis_os.h"
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +16,10 @@ static uint32_t s_runtime_count;
 static tars_builtin_app_t s_builtins[8];
 static uint32_t s_builtin_count;
 static uint8_t s_last_timeslice;
+static uint8_t s_rr_cursor[TARS_SCHED_SLICE_COUNT + 1U];
+static uint8_t s_current_timeslice;
+static char s_running_name[TARS_NAME_MAX];
+static uint8_t s_has_running;
 
 static void registry_release_app(const tars_app_runtime_t *rt)
 {
@@ -85,44 +91,155 @@ static void registry_release_timeslice(uint8_t timeslice)
   }
 }
 
-static void registry_run_timeslice(uint8_t timeslice)
+static uint8_t registry_normalize_timeslice(uint8_t timeslice)
 {
+  if (timeslice == 0U)
+  {
+    return TARS_SCHED_DEFAULT_TS;
+  }
+
+  if (timeslice > TARS_SCHED_SLICE_COUNT)
+  {
+    return TARS_SCHED_SLICE_COUNT;
+  }
+
+  return timeslice;
+}
+
+static uint8_t registry_normalize_priority(uint8_t priority)
+{
+  if (priority == 0U)
+  {
+    return TARS_SCHED_DEFAULT_PRI;
+  }
+
+  return priority;
+}
+
+static int32_t registry_select_timeslice_app(uint8_t timeslice)
+{
+  uint32_t candidates[TARS_RUNTIME_MAX];
+  uint32_t count = 0U;
+  uint8_t best_pri = 0U;
   uint32_t i;
+
+  timeslice = registry_normalize_timeslice(timeslice);
 
   for (i = 0U; i < s_runtime_count; i++)
   {
-    if (!s_runtime[i].submitted || (s_runtime[i].timeslice != timeslice))
+    if (!s_runtime[i].submitted ||
+        (registry_normalize_timeslice(s_runtime[i].timeslice) != timeslice))
     {
       continue;
     }
 
-    registry_acquire_app(&s_runtime[i]);
-
-    if (s_runtime[i].app_type == TARS_APP_TYPE_NATIVE)
+    candidates[count++] = i;
+    if (s_runtime[i].priority > best_pri)
     {
-      uint32_t j;
+      best_pri = s_runtime[i].priority;
+    }
+  }
 
-      for (j = 0U; j < s_builtin_count; j++)
+  if (count == 0U)
+  {
+    return -1;
+  }
+
+  {
+    uint32_t filtered[TARS_RUNTIME_MAX];
+    uint32_t fcount = 0U;
+
+    for (i = 0U; i < count; i++)
+    {
+      if (s_runtime[candidates[i]].priority == best_pri)
       {
-        if (strcmp(s_builtins[j].name, s_runtime[i].name) == 0)
+        filtered[fcount++] = candidates[i];
+      }
+    }
+
+    if (fcount == 0U)
+    {
+      return -1;
+    }
+
+    {
+      uint32_t pick = (uint32_t)s_rr_cursor[timeslice] % fcount;
+
+      s_rr_cursor[timeslice]++;
+      return (int32_t)filtered[pick];
+    }
+  }
+}
+
+static void registry_announce_running(const char *name, uint8_t timeslice, uint8_t priority)
+{
+  char banner[40];
+
+  (void)priority;
+
+  if (name == NULL)
+  {
+    return;
+  }
+
+  if ((s_has_running != 0U) && (strcmp(s_running_name, name) == 0) &&
+      (s_current_timeslice == timeslice))
+  {
+    return;
+  }
+
+  strncpy(s_running_name, name, TARS_NAME_MAX);
+  s_running_name[TARS_NAME_MAX - 1U] = '\0';
+  s_has_running = 1U;
+  s_current_timeslice = timeslice;
+
+  (void)snprintf(banner, sizeof(banner), "run:%s ts%u", name, (unsigned)timeslice);
+  LcdLog_SetStatusBanner(banner);
+}
+
+static void registry_run_timeslice(uint8_t timeslice)
+{
+  int32_t idx;
+
+  timeslice = registry_normalize_timeslice(timeslice);
+  idx = registry_select_timeslice_app(timeslice);
+
+  if (idx < 0)
+  {
+    return;
+  }
+
+  registry_announce_running(s_runtime[(uint32_t)idx].name,
+                            timeslice,
+                            s_runtime[(uint32_t)idx].priority);
+  registry_acquire_app(&s_runtime[(uint32_t)idx]);
+
+  if (s_runtime[(uint32_t)idx].app_type == TARS_APP_TYPE_NATIVE)
+  {
+#if !TARS_MVP_LUA_ONLY
+    uint32_t j;
+
+    for (j = 0U; j < s_builtin_count; j++)
+    {
+      if (strcmp(s_builtins[j].name, s_runtime[(uint32_t)idx].name) == 0)
+      {
+        if (s_builtins[j].tick != NULL)
         {
-          if (s_builtins[j].tick != NULL)
-          {
-            s_builtins[j].tick();
-          }
-          break;
+          s_builtins[j].tick();
         }
+        break;
       }
+    }
 
-      if (j >= s_builtin_count)
-      {
-        (void)TarsApp_RunOnce(s_runtime[i].name);
-      }
-    }
-    else if (s_runtime[i].app_type == TARS_APP_TYPE_LUA)
+    if (j >= s_builtin_count)
     {
-      TarsLua_RequestRun(s_runtime[i].name);
+      (void)TarsApp_RunOnce(s_runtime[(uint32_t)idx].name);
     }
+#endif
+  }
+  else if (s_runtime[(uint32_t)idx].app_type == TARS_APP_TYPE_LUA)
+  {
+    TarsLua_RequestRun(s_runtime[(uint32_t)idx].name);
   }
 }
 
@@ -143,7 +260,8 @@ static tars_status_t registry_fill_runtime_from_storage(void)
     }
 
     s_runtime[s_runtime_count].app_type = entry->app_type;
-    s_runtime[s_runtime_count].timeslice = entry->timeslice;
+    s_runtime[s_runtime_count].timeslice = registry_normalize_timeslice(entry->timeslice);
+    s_runtime[s_runtime_count].priority = registry_normalize_priority((uint8_t)(entry->reserved & 0xFFU));
     s_runtime[s_runtime_count].submitted = entry->submitted;
     s_runtime[s_runtime_count].loaded = 0U;
     s_runtime[s_runtime_count].flags = entry->flags;
@@ -160,6 +278,7 @@ static tars_status_t registry_fill_runtime_from_storage(void)
   return TARS_OK;
 }
 
+#if !TARS_MVP_LUA_ONLY
 static tars_status_t registry_load_native_runtime(tars_app_runtime_t *rt,
                                                   const uint8_t *blob,
                                                   uint32_t blob_size)
@@ -168,31 +287,12 @@ static tars_status_t registry_load_native_runtime(tars_app_runtime_t *rt,
   tars_loader_result_t load = {0};
   tars_status_t status;
 
-  if ((hdr->flags & TARS_LOAD_FIXED) != 0U)
+  if ((hdr->flags & TARS_LOAD_FIXED) == 0U)
   {
-    load.load_addr = hdr->link_base;
+    return TARS_ERR_PARAM;
   }
-  else if ((hdr->flags & TARS_EXEC_SDRAM) != 0U)
-  {
-    status = TarsStorage_AllocSdramExec(hdr->text_size + hdr->data_size + hdr->bss_size,
-                                        &load.load_addr);
-    if (status != TARS_OK)
-    {
-      return status;
-    }
-  }
-  else
-  {
-    int32_t slot = -1;
 
-    if (TarsStorage_FindFreeNativeSlot(&slot) != TARS_OK)
-    {
-      return TARS_ERR_NO_SLOT;
-    }
-
-    load.load_addr = TarsNativeSlotAddress((uint32_t)slot);
-    rt->slot_index = (uint32_t)slot;
-  }
+  load.load_addr = hdr->link_base;
 
   status = TarsLoader_LoadNative(blob, blob_size, &load);
   if (status != TARS_OK)
@@ -205,6 +305,7 @@ static tars_status_t registry_load_native_runtime(tars_app_runtime_t *rt,
   rt->loaded = 1U;
   return TARS_OK;
 }
+#endif
 
 static tars_status_t registry_validate_submit(const char *name, const tars_manifest_t *manifest)
 {
@@ -227,6 +328,29 @@ void TarsApp_Init(void)
   registry_fill_runtime_from_storage();
 }
 
+void TarsApp_GetSchedulerInfo(tars_scheduler_info_t *info)
+{
+  if (info == NULL)
+  {
+    return;
+  }
+
+  info->current_timeslice = s_last_timeslice;
+  info->slice_count = TARS_SCHED_SLICE_COUNT;
+  info->slice_ms = TARS_SCHED_SLICE_MS;
+  info->has_running = s_has_running;
+
+  if (s_has_running != 0U)
+  {
+    strncpy(info->running_name, s_running_name, TARS_NAME_MAX);
+    info->running_name[TARS_NAME_MAX - 1U] = '\0';
+  }
+  else
+  {
+    info->running_name[0] = '\0';
+  }
+}
+
 void TarsApp_RegisterBuiltin(const tars_builtin_app_t *app)
 {
   if ((app == NULL) || (s_builtin_count >= 8U) || (s_runtime_count >= TARS_RUNTIME_MAX))
@@ -237,7 +361,8 @@ void TarsApp_RegisterBuiltin(const tars_builtin_app_t *app)
   s_builtins[s_builtin_count++] = *app;
 
   s_runtime[s_runtime_count].app_type = TARS_APP_TYPE_NATIVE;
-  s_runtime[s_runtime_count].timeslice = app->timeslice;
+  s_runtime[s_runtime_count].timeslice = registry_normalize_timeslice(app->timeslice);
+  s_runtime[s_runtime_count].priority = TARS_SCHED_DEFAULT_PRI;
   s_runtime[s_runtime_count].submitted = 0U;
   s_runtime[s_runtime_count].loaded = 1U;
   s_runtime[s_runtime_count].manifest = app->manifest;
@@ -249,6 +374,12 @@ void TarsApp_RegisterBuiltin(const tars_builtin_app_t *app)
 
 tars_status_t TarsApp_InstallNative(const uint8_t *blob, uint32_t blob_size, int32_t slot_hint)
 {
+#if TARS_MVP_LUA_ONLY
+  (void)blob;
+  (void)blob_size;
+  (void)slot_hint;
+  return TARS_ERR_STATE;
+#else
   const tars_app_hdr_t *hdr;
   tars_storage_entry_t entry = {0};
   int32_t slot = slot_hint;
@@ -272,48 +403,26 @@ tars_status_t TarsApp_InstallNative(const uint8_t *blob, uint32_t blob_size, int
     }
   }
 
-  if ((hdr->flags & TARS_LOAD_FIXED) != 0U)
+  if ((hdr->flags & TARS_LOAD_FIXED) == 0U)
   {
-    slot = (int32_t)((hdr->link_base - TARS_NATIVE_SLOT_BASE) / TARS_NATIVE_SLOT_STRIDE);
-
-    if ((slot < 0) || (slot >= (int32_t)TARS_NATIVE_SLOT_COUNT))
-    {
-      return TARS_ERR_PARAM;
-    }
-
-    status = TarsStorage_WriteNativeSlot((uint32_t)slot, blob, blob_size);
-    if (status != TARS_OK)
-    {
-      return status;
-    }
-
-    rt.slot_index = (uint32_t)slot;
-    rt.exec_addr = hdr->link_base;
+    return TARS_ERR_PARAM;
   }
-  else
+
+  slot = (int32_t)((hdr->link_base - TARS_NATIVE_SLOT_BASE) / TARS_NATIVE_SLOT_STRIDE);
+
+  if ((slot < 0) || (slot >= (int32_t)TARS_NATIVE_SLOT_COUNT))
   {
-    if (slot < 0)
-    {
-      status = TarsStorage_FindFreeNativeSlot(&slot);
-      if (status != TARS_OK)
-      {
-        return status;
-      }
-    }
-
-    status = TarsStorage_WriteNativeSlot((uint32_t)slot, blob, blob_size);
-    if (status != TARS_OK)
-    {
-      return status;
-    }
-
-    rt.slot_index = (uint32_t)slot;
-    status = registry_load_native_runtime(&rt, blob, blob_size);
-    if (status != TARS_OK)
-    {
-      return status;
-    }
+    return TARS_ERR_PARAM;
   }
+
+  status = TarsStorage_WriteNativeSlot((uint32_t)slot, blob, blob_size);
+  if (status != TARS_OK)
+  {
+    return status;
+  }
+
+  rt.slot_index = (uint32_t)slot;
+  rt.exec_addr = hdr->link_base;
 
   strncpy(entry.name, hdr->name, TARS_NAME_MAX);
   entry.app_type = TARS_APP_TYPE_NATIVE;
@@ -336,13 +445,13 @@ tars_status_t TarsApp_InstallNative(const uint8_t *blob, uint32_t blob_size, int
 
   registry_fill_runtime_from_storage();
   return TARS_OK;
+#endif
 }
 
 tars_status_t TarsApp_InstallLua(const uint8_t *blob, uint32_t blob_size)
 {
   const tars_lua_hdr_t *hdr;
   tars_storage_entry_t entry = {0};
-  uint32_t offset = 0U;
   tars_status_t status;
 
   status = TarsLoader_VerifyLuaBlob(blob, blob_size);
@@ -362,19 +471,7 @@ tars_status_t TarsApp_InstallLua(const uint8_t *blob, uint32_t blob_size)
     }
   }
 
-  status = TarsStorage_AllocLuaOffset(blob_size, &offset);
-  if (status != TARS_OK)
-  {
-    return status;
-  }
-
-  status = TarsStorage_PrepareLuaWrite(offset, blob_size);
-  if (status != TARS_OK)
-  {
-    return status;
-  }
-
-  status = TarsStorage_WriteLuaPool(offset, blob, blob_size);
+  status = TarsStorage_WriteLuaBlob(hdr->name, blob, blob_size);
   if (status != TARS_OK)
   {
     return status;
@@ -384,10 +481,11 @@ tars_status_t TarsApp_InstallLua(const uint8_t *blob, uint32_t blob_size)
   entry.app_type = TARS_APP_TYPE_LUA;
   entry.installed = 1U;
   entry.submitted = 0U;
-  entry.timeslice = hdr->timeslice;
+  entry.timeslice = registry_normalize_timeslice(hdr->timeslice);
+  entry.reserved = registry_normalize_priority(hdr->priority);
   entry.flags = hdr->flags;
   entry.app_version = hdr->app_version;
-  entry.blob_addr = TARS_LUA_POOL_BASE + offset;
+  entry.blob_addr = 0U;
   entry.blob_size = blob_size;
   entry.manifest = hdr->manifest;
 
@@ -464,6 +562,7 @@ tars_status_t TarsApp_Revoke(const char *name)
     TarsStorage_UpdateEntry((uint32_t)storage_idx, &entry);
   }
 
+  TarsLua_Reset(name);
   return TARS_OK;
 }
 
@@ -482,6 +581,7 @@ tars_status_t TarsApp_Uninstall(const char *name)
     return status;
   }
 
+  TarsLua_Reset(name);
   registry_fill_runtime_from_storage();
   return TARS_OK;
 }
@@ -499,6 +599,9 @@ tars_status_t TarsApp_RunOnce(const char *name)
 
     if (s_runtime[i].app_type == TARS_APP_TYPE_NATIVE)
     {
+#if TARS_MVP_LUA_ONLY
+      return TARS_ERR_STATE;
+#else
       const tars_storage_entry_t *entry = TarsStorage_GetEntry(TarsStorage_FindByName(name));
       tars_app_runtime_t rt = s_runtime[i];
 
@@ -515,6 +618,7 @@ tars_status_t TarsApp_RunOnce(const char *name)
       }
 
       return TARS_OK;
+#endif
     }
 
     if (s_runtime[i].app_type == TARS_APP_TYPE_LUA)
@@ -551,12 +655,13 @@ tars_status_t TarsApp_List(char *out, uint32_t out_size)
   {
     written += snprintf(out + written,
                         (written < (int)out_size) ? (out_size - (uint32_t)written) : 0U,
-                        "%s type=%u slot=%lu ts=%u sub=%u\r\n",
+                        "%s type=%u slot=%lu ts=%u sub=%u pri=%u\r\n",
                         s_runtime[i].name,
                         s_runtime[i].app_type,
                         (unsigned long)s_runtime[i].slot_index,
                         s_runtime[i].timeslice,
-                        s_runtime[i].submitted);
+                        s_runtime[i].submitted,
+                        s_runtime[i].priority);
 
     if ((uint32_t)written >= out_size)
     {
@@ -596,9 +701,7 @@ tars_status_t TarsApp_ListSlots(char *out, uint32_t out_size)
 
   written += snprintf(out + written,
                       (written < (int)out_size) ? (out_size - (uint32_t)written) : 0U,
-                      "sdram_exec=0x%08lX size=%u (Phase2 reloc)\r\n",
-                      (unsigned long)TARS_SDRAM_EXEC_BASE,
-                      (unsigned)TARS_SDRAM_EXEC_SIZE);
+                      "native slots: post-MVP Phase1 (MVP lua-only)\r\n");
 
   return TARS_OK;
 }
@@ -616,7 +719,7 @@ void TarsApp_SchedulerTick(uint8_t timeslice)
 
 void TarsApp_SchedulerTask(void const *argument)
 {
-  uint8_t slice = 1U;
+  uint8_t slice = TARS_SCHED_DEFAULT_TS;
   static uint8_t s_app_ready = 0U;
 
   (void)argument;
@@ -632,11 +735,11 @@ void TarsApp_SchedulerTask(void const *argument)
     TarsApp_SchedulerTick(slice);
     slice++;
 
-    if (slice > 8U)
+    if (slice > TARS_SCHED_SLICE_COUNT)
     {
-      slice = 1U;
+      slice = TARS_SCHED_DEFAULT_TS;
     }
 
-    osDelay(100);
+    osDelay(TARS_SCHED_SLICE_MS);
   }
 }

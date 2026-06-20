@@ -30,6 +30,10 @@
 #include "lcd_log.h"
 #include "tars_app.h"
 #include "tars_lua.h"
+#include "tars_api.h"
+#include "tars_storage.h"
+#include "tars_ota.h"
+#include "tars_hal.h"
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -123,6 +127,10 @@ void StartDefaultTask(void const * argument)
 {
   (void)argument;
   LcdLog_Init();
+  TarsApi_Init();
+  TarsStorage_Init();
+  TarsOta_Init();
+  TarsHal_Init();
   UsbOtg_Task(argument);
 }
 

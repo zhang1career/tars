@@ -33,14 +33,17 @@ void TarsStorage_Init(void);
 int32_t TarsStorage_FindByName(const char *name);
 tars_status_t TarsStorage_FindFreeNativeSlot(int32_t *slot_out);
 tars_status_t TarsStorage_AllocSdramExec(uint32_t size, uint32_t *addr_out);
-tars_status_t TarsStorage_AllocLuaOffset(uint32_t size, uint32_t *offset_out);
 tars_status_t TarsStorage_WriteNativeSlot(uint32_t slot_index,
                                           const uint8_t *blob,
                                           uint32_t blob_size);
-tars_status_t TarsStorage_PrepareLuaWrite(uint32_t offset, uint32_t size);
-tars_status_t TarsStorage_WriteLuaPool(uint32_t offset,
-                                       const uint8_t *data,
-                                       uint32_t size);
+tars_status_t TarsStorage_WriteLuaBlob(const char *name,
+                                       const uint8_t *blob,
+                                       uint32_t blob_size);
+tars_status_t TarsStorage_ReadLuaBlob(const char *name,
+                                      uint8_t *blob,
+                                      uint32_t max_size,
+                                      uint32_t *out_size);
+tars_status_t TarsStorage_RemoveLuaBlob(const char *name);
 tars_status_t TarsStorage_AddEntry(const tars_storage_entry_t *entry);
 tars_status_t TarsStorage_UpdateEntry(uint32_t index, const tars_storage_entry_t *entry);
 tars_status_t TarsStorage_FlushCatalogIfDirty(int *flushed_out);

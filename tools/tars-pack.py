@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack a native TARS app ELF into a .tapp blob (Phase 1 fixed or Phase 2 reloc)."""
+"""Pack TARS app images. MVP: lua only. Native: Phase 1 fixed-slot (post-MVP)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from pathlib import Path
 TARS_APP_MAGIC = 0x54504150
 TARS_LUA_MAGIC = 0x5450484C
 TARS_API_VERSION = 1
-TARS_RELOC_ABS32 = 1
+TARS_NATIVE_SLOT_BASE = 0x080A0000
+TARS_NATIVE_SLOT_STRIDE = 0x20000
 
 HEADER_FMT = "<IHHII16sIBBH16sI6I"
 
@@ -43,8 +44,7 @@ def tars_crc32_blob(hdr_prefix: bytes, payload: bytes) -> int:
     return crc ^ 0xFFFFFFFF
 
 
-def read_elf_sections(elf: Path) -> tuple[bytes, bytes, int, int, list[tuple[int, int]]]:
-    objdump = subprocess.check_output(["arm-none-eabi-objdump", "-h", str(elf)], text=True)
+def read_elf_sections(elf: Path) -> tuple[bytes, bytes, int, int]:
     readelf = subprocess.check_output(["arm-none-eabi-readelf", "-S", str(elf)], text=True)
 
     def section_size(name: str) -> int:
@@ -58,22 +58,18 @@ def read_elf_sections(elf: Path) -> tuple[bytes, bytes, int, int, list[tuple[int
     data_size = section_size(".data")
     bss_size = section_size(".bss")
 
-    text = subprocess.check_output(["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.text", str(elf), "/dev/stdout"], stderr=subprocess.DEVNULL)
-    rodata = subprocess.check_output(["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.rodata", str(elf), "/dev/stdout"], stderr=subprocess.DEVNULL)
-    data = subprocess.check_output(["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.data", str(elf), "/dev/stdout"], stderr=subprocess.DEVNULL)
-
-    relocs: list[tuple[int, int]] = []
-    rel = subprocess.run(["arm-none-eabi-objdump", "-r", str(elf)], capture_output=True, text=True)
-    if rel.returncode == 0:
-        for line in rel.stdout.splitlines():
-            if "ABS32" in line or "32" in line:
-                parts = line.split()
-                if len(parts) >= 4 and parts[-1].startswith("0x"):
-                    try:
-                        offset = int(parts[0].split(":")[-1], 16)
-                        relocs.append((offset, TARS_RELOC_ABS32))
-                    except ValueError:
-                        pass
+    text = subprocess.check_output(
+        ["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.text", str(elf), "/dev/stdout"],
+        stderr=subprocess.DEVNULL,
+    )
+    rodata = subprocess.check_output(
+        ["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.rodata", str(elf), "/dev/stdout"],
+        stderr=subprocess.DEVNULL,
+    )
+    data = subprocess.check_output(
+        ["arm-none-eabi-objcopy", "-O", "binary", "--only-section=.data", str(elf), "/dev/stdout"],
+        stderr=subprocess.DEVNULL,
+    )
 
     entry_offset = 0
     nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True)
@@ -82,33 +78,23 @@ def read_elf_sections(elf: Path) -> tuple[bytes, bytes, int, int, list[tuple[int
             entry_offset = int(line.split()[0], 16)
             break
 
-    return text + rodata, data, bss_size, entry_offset, relocs
+    return text + rodata, data, bss_size, entry_offset
 
 
 TARS_NATIVE_HDR_CRC_LEN = 92
 
 
 def pack_native(args: argparse.Namespace) -> None:
-    text, data, bss_size, entry_offset, relocs = read_elf_sections(Path(args.elf))
+    text, data, bss_size, entry_offset = read_elf_sections(Path(args.elf))
 
-    flags = 0
-    link_base = 0
-    if args.mode == "fixed":
-        flags |= 0x0010  # TARS_LOAD_FIXED | TARS_EXEC_FLASH
-        flags |= 0x0010
-        flags = 0x0011
-        link_base = 0x08080000 + args.slot * 0x20000
-    else:
-        flags = 0x0022  # TARS_LOAD_RELOC | TARS_EXEC_SDRAM
-        if args.flash:
-            flags = 0x0012  # TARS_LOAD_RELOC | TARS_EXEC_FLASH
+    flags = 0x0011  # TARS_LOAD_FIXED | TARS_EXEC_FLASH
+    link_base = TARS_NATIVE_SLOT_BASE + args.slot * TARS_NATIVE_SLOT_STRIDE
 
     manifest_count = len(args.resource or [])
     manifest = bytes([manifest_count]) + bytes(15 * 4)
 
     header_size = 96
-    reloc_bytes = b"".join(struct.pack("<IB3s", off, typ, b"\0\0\0") for off, typ in relocs[:256])
-    payload = text + data + reloc_bytes
+    payload = text + data
     payload_size = len(payload)
 
     header = struct.pack(
@@ -128,7 +114,7 @@ def pack_native(args: argparse.Namespace) -> None:
         len(data),
         bss_size,
         entry_offset,
-        len(relocs),
+        0,
         payload_size,
         0,
     )
@@ -136,18 +122,17 @@ def pack_native(args: argparse.Namespace) -> None:
     blob = bytearray(header)
     blob.extend(payload)
     crc = tars_crc32_blob(bytes(header[:TARS_NATIVE_HDR_CRC_LEN]), payload)
-    blob[TARS_NATIVE_HDR_CRC_LEN:TARS_NATIVE_HDR_CRC_LEN + 4] = struct.pack("<I", crc)
+    blob[TARS_NATIVE_HDR_CRC_LEN : TARS_NATIVE_HDR_CRC_LEN + 4] = struct.pack("<I", crc)
 
     Path(args.output).write_bytes(blob)
-    print(f"wrote {args.output} ({len(blob)} bytes, mode={args.mode}, relocs={len(relocs)})")
+    print(f"wrote {args.output} ({len(blob)} bytes, phase1 fixed slot={args.slot})")
 
 
 TARS_LUA_HDR_SIZE = 108
-TARS_LUA_HDR_CRC_LEN = 104  # bytes before crc32 field (matches offsetof in firmware)
+TARS_LUA_HDR_CRC_LEN = 104
 
 
 def pack_lua_manifest() -> bytes:
-    """68-byte tars_manifest_t (count + 3 pad + 16 x tars_resource_t)."""
     return bytes(68)
 
 
@@ -164,7 +149,8 @@ def pack_lua(args: argparse.Namespace) -> None:
     header[8:24] = name
     struct.pack_into("<I", header, 24, args.version)
     header[28] = args.timeslice & 0xFF
-    header[29:32] = b"\0\0\0"
+    header[29] = args.priority & 0xFF
+    header[30:32] = b"\0\0"
     header[32:100] = manifest
     struct.pack_into("<I", header, 100, len(lua))
 
@@ -177,18 +163,16 @@ def pack_lua(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pack TARS app images")
+    parser = argparse.ArgumentParser(description="Pack TARS app images (MVP: lua)")
     sub = parser.add_subparsers(dest="kind", required=True)
 
-    native = sub.add_parser("native", help="Pack native ELF")
+    native = sub.add_parser("native", help="Pack Phase 1 fixed-slot native ELF (post-MVP)")
     native.add_argument("elf")
     native.add_argument("-o", "--output", required=True)
     native.add_argument("--name", required=True)
     native.add_argument("--version", type=int, default=1)
     native.add_argument("--timeslice", type=int, default=1)
-    native.add_argument("--mode", choices=["fixed", "reloc"], default="fixed")
     native.add_argument("--slot", type=int, default=0)
-    native.add_argument("--flash", action="store_true")
     native.add_argument("--resource", action="append")
     native.set_defaults(func=pack_native)
 
@@ -198,6 +182,7 @@ def main() -> None:
     lua.add_argument("--name", required=True)
     lua.add_argument("--version", type=int, default=1)
     lua.add_argument("--timeslice", type=int, default=1)
+    lua.add_argument("--priority", type=int, default=10)
     lua.set_defaults(func=pack_lua)
 
     args = parser.parse_args()

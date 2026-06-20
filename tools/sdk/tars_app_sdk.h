@@ -1,10 +1,9 @@
+/*
+ * PC-side SDK for post-MVP Phase 1 native apps (fixed flash slot, XIP).
+ * MVP firmware rejects .tapp install (TARS_MVP_LUA_ONLY).
+ */
 #ifndef TARS_APP_SDK_H
 #define TARS_APP_SDK_H
-
-/*
- * PC-side SDK header for building native TARS apps.
- * Copy or include from tools/sdk/ when compiling with arm-none-eabi-gcc.
- */
 
 #include <stdint.h>
 
@@ -15,9 +14,7 @@
 #define TARS_RESOURCE_GPIO        1U
 
 #define TARS_LOAD_FIXED           0x0001U
-#define TARS_LOAD_RELOC           0x0002U
 #define TARS_EXEC_FLASH           0x0010U
-#define TARS_EXEC_SDRAM           0x0020U
 
 typedef struct {
   uint8_t  type;
@@ -38,7 +35,6 @@ typedef struct {
   void (*log)(const char *msg);
 } tars_api_t;
 
-/* Implemented by each app */
 void app_entry(const tars_api_t *api);
 
 #endif /* TARS_APP_SDK_H */

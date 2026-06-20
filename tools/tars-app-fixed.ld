@@ -9,7 +9,7 @@ ENTRY(app_entry)
 
 __slot_index = DEFINED(TARS_SLOT_INDEX) ? TARS_SLOT_INDEX : 0;
 __slot_stride = 0x20000;
-__link_base = 0x08080000 + (__slot_index * __slot_stride);
+__link_base = 0x080A0000 + (__slot_index * __slot_stride);
 
 MEMORY
 {

@@ -16,10 +16,11 @@
 #define TARS_WHITELIST_MEMBER_MAX 4U
 #define TARS_RELOC_MAX            256U
 
-#define TARS_LOAD_FIXED           0x0001U /* Phase 1: pre-linked to slot link_addr */
-#define TARS_LOAD_RELOC           0x0002U /* Phase 2: apply reloc table at runtime */
-#define TARS_EXEC_FLASH           0x0010U /* XIP from internal flash slot */
-#define TARS_EXEC_SDRAM           0x0020U /* copy to SDRAM and execute */
+#define TARS_LOAD_FIXED           0x0001U /* Phase 1: pre-linked to slot link_addr, XIP */
+/* TARS_LOAD_RELOC / TARS_EXEC_SDRAM — not used (Phase 2 cancelled) */
+#define TARS_LOAD_RELOC           0x0002U
+#define TARS_EXEC_FLASH           0x0010U /* execute from internal flash slot */
+#define TARS_EXEC_SDRAM           0x0020U
 
 #define TARS_APP_TYPE_NATIVE      1U
 #define TARS_APP_TYPE_LUA         2U
@@ -94,7 +95,8 @@ typedef struct {
   char            name[TARS_NAME_MAX];
   uint32_t        app_version;
   uint8_t         timeslice;
-  uint8_t         reserved[3];
+  uint8_t         priority;
+  uint8_t         reserved[2];
   tars_manifest_t manifest;
   uint32_t        lua_size;
   uint32_t        crc32;
@@ -123,6 +125,7 @@ typedef struct {
   char            name[TARS_NAME_MAX];
   uint8_t         app_type;
   uint8_t         timeslice;
+  uint8_t         priority;
   uint8_t         submitted;
   uint8_t         loaded;
   uint16_t        flags;
@@ -133,6 +136,14 @@ typedef struct {
   uint32_t        slot_index;
   tars_native_entry_fn entry;
 } tars_app_runtime_t;
+
+typedef struct {
+  uint8_t  current_timeslice;
+  uint8_t  slice_count;
+  uint16_t slice_ms;
+  char     running_name[TARS_NAME_MAX];
+  uint8_t  has_running;
+} tars_scheduler_info_t;
 
 typedef struct {
   tars_resource_t resource;
@@ -156,5 +167,6 @@ tars_status_t TarsApp_ListSlots(char *out, uint32_t out_size);
 void TarsApp_RegisterBuiltin(const tars_builtin_app_t *app);
 void TarsApp_SchedulerTick(uint8_t timeslice);
 void TarsApp_SchedulerTask(void const *argument);
+void TarsApp_GetSchedulerInfo(tars_scheduler_info_t *info);
 
 #endif /* TARS_APP_H */

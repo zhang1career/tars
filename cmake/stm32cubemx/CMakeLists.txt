@@ -15,6 +15,7 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Utilities/Fonts
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/lua51
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/littlefs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_HOST/App
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_HOST/Target
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App
@@ -44,12 +45,18 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/usb_otg.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/shell.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_api.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_vfs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_crc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_loader.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_manifest.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_registry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_flash_hw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_lfs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_lua.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_ota.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_hal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_sys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_io.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_log.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/ili9341.c

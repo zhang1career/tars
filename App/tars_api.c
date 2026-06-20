@@ -1,5 +1,6 @@
 #include "tars_app.h"
 #include "tars_api.h"
+#include "tars_vfs.h"
 #include "main.h"
 #include "cmsis_os.h"
 
@@ -7,14 +8,48 @@ static tars_api_t s_api;
 
 static void api_gpio_write(uint32_t pin_id, int value)
 {
-  (void)pin_id;
-  (void)value;
+  GPIO_TypeDef *port = NULL;
+  uint16_t pin = 0U;
+
+  if (pin_id == 13U)
+  {
+    port = LD3_GPIO_Port;
+    pin = LD3_Pin;
+  }
+  else if (pin_id == 14U)
+  {
+    port = LD4_GPIO_Port;
+    pin = LD4_Pin;
+  }
+  else
+  {
+    return;
+  }
+
+  HAL_GPIO_WritePin(port, pin, (value != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 static int api_gpio_read(uint32_t pin_id)
 {
-  (void)pin_id;
-  return 0;
+  GPIO_TypeDef *port = NULL;
+  uint16_t pin = 0U;
+
+  if (pin_id == 13U)
+  {
+    port = LD3_GPIO_Port;
+    pin = LD3_Pin;
+  }
+  else if (pin_id == 14U)
+  {
+    port = LD4_GPIO_Port;
+    pin = LD4_Pin;
+  }
+  else
+  {
+    return 0;
+  }
+
+  return (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1 : 0;
 }
 
 static void api_sleep_ms(uint32_t ms)
@@ -24,11 +59,12 @@ static void api_sleep_ms(uint32_t ms)
 
 static void api_log(const char *msg)
 {
-  (void)msg;
+  TarsVfs_WriteLog(msg);
 }
 
 void TarsApi_Init(void)
 {
+  TarsVfs_Init();
   s_api.api_version = TARS_API_VERSION;
   s_api.gpio_write = api_gpio_write;
   s_api.gpio_read = api_gpio_read;

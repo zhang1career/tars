@@ -1,6 +1,6 @@
 #include "tars_loader.h"
 #include "tars_crc.h"
-#include "main.h"
+#include "tars_platform.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -33,56 +33,25 @@ static tars_status_t loader_validate_header(const tars_app_hdr_t *hdr, uint32_t 
     return TARS_ERR_PARAM;
   }
 
-  if ((hdr->flags & (TARS_LOAD_FIXED | TARS_LOAD_RELOC)) == 0U)
+  /* Phase 1 fixed-slot only; reloc/SDRAM blobs rejected. */
+  if ((hdr->flags & TARS_LOAD_FIXED) == 0U)
   {
     return TARS_ERR_PARAM;
   }
 
-  if ((hdr->flags & (TARS_LOAD_FIXED | TARS_LOAD_RELOC)) ==
-      (TARS_LOAD_FIXED | TARS_LOAD_RELOC))
+  if ((hdr->flags & (TARS_LOAD_RELOC | TARS_EXEC_SDRAM)) != 0U)
   {
     return TARS_ERR_PARAM;
+  }
+
+  if (hdr->reloc_count != 0U)
+  {
+    return TARS_ERR_RELOC;
   }
 
   if (hdr->payload_size > (blob_size - hdr->header_size))
   {
     return TARS_ERR_PARAM;
-  }
-
-  if (hdr->reloc_count > TARS_RELOC_MAX)
-  {
-    return TARS_ERR_RELOC;
-  }
-
-  return TARS_OK;
-}
-
-static tars_status_t loader_apply_relocs(uint32_t load_base,
-                                         uint8_t *image,
-                                         uint32_t image_size,
-                                         const tars_reloc_t *relocs,
-                                         uint32_t reloc_count)
-{
-  uint32_t i;
-
-  for (i = 0U; i < reloc_count; i++)
-  {
-    uint32_t offset = relocs[i].offset;
-
-    if ((offset + sizeof(uint32_t)) > image_size)
-    {
-      return TARS_ERR_RELOC;
-    }
-
-    if (relocs[i].type == TARS_RELOC_ABS32)
-    {
-      uint32_t *word = (uint32_t *)(void *)(image + offset);
-      *word += load_base;
-    }
-    else
-    {
-      return TARS_ERR_RELOC;
-    }
   }
 
   return TARS_OK;
@@ -114,8 +83,7 @@ tars_status_t TarsLoader_VerifyNativeBlob(const uint8_t *blob, uint32_t blob_siz
     return TARS_ERR_PARAM;
   }
 
-  expected_payload = hdr->text_size + hdr->data_size +
-                     (hdr->reloc_count * (uint32_t)sizeof(tars_reloc_t));
+  expected_payload = hdr->text_size + hdr->data_size;
 
   if (hdr->payload_size != expected_payload)
   {
@@ -141,7 +109,6 @@ tars_status_t TarsLoader_LoadNative(const uint8_t *blob,
 {
   const tars_app_hdr_t *hdr;
   const uint8_t *payload;
-  const tars_reloc_t *relocs;
   tars_status_t status;
   uint32_t image_size;
 
@@ -160,7 +127,6 @@ tars_status_t TarsLoader_LoadNative(const uint8_t *blob,
 
   hdr = (const tars_app_hdr_t *)(const void *)blob;
   payload = blob + hdr->header_size;
-  relocs = (const tars_reloc_t *)(const void *)(payload + hdr->text_size + hdr->data_size);
 
   result->flags = hdr->flags;
   result->entry_offset = hdr->entry_offset;
@@ -170,48 +136,14 @@ tars_status_t TarsLoader_LoadNative(const uint8_t *blob,
   result->data_size = hdr->data_size;
   image_size = hdr->text_size + hdr->data_size;
 
-  if ((hdr->flags & TARS_LOAD_FIXED) != 0U)
-  {
-    result->exec_addr = hdr->link_base;
-    result->data_addr = hdr->link_base + hdr->text_size;
-    result->load_addr = hdr->link_base;
+  result->exec_addr = hdr->link_base;
+  result->data_addr = hdr->link_base + hdr->text_size;
+  result->load_addr = hdr->link_base;
 
-    if (image_size > 0U)
-    {
-      memcpy((void *)result->exec_addr, payload, image_size);
-    }
-
-    loader_zero_bss(result->data_addr + hdr->data_size, hdr->bss_size);
-    return TARS_OK;
-  }
-
-  if ((hdr->flags & TARS_EXEC_SDRAM) != 0U)
-  {
-    result->exec_addr = result->load_addr;
-  }
-  else
-  {
-    result->exec_addr = result->load_addr;
-  }
-
-  result->data_addr = result->exec_addr + hdr->text_size;
-
+  /* Post-MVP: skip copy if image already in flash at link_base (true XIP). */
   if (image_size > 0U)
   {
     memcpy((void *)result->exec_addr, payload, image_size);
-  }
-
-  if ((hdr->flags & TARS_LOAD_RELOC) != 0U)
-  {
-    status = loader_apply_relocs(result->exec_addr,
-                                 (uint8_t *)(void *)result->exec_addr,
-                                 image_size,
-                                 relocs,
-                                 hdr->reloc_count);
-    if (status != TARS_OK)
-    {
-      return status;
-    }
   }
 
   loader_zero_bss(result->data_addr + hdr->data_size, hdr->bss_size);

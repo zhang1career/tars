@@ -1,10 +1,11 @@
 #include "tars_storage.h"
+#include "tars_lfs.h"
+#include "tars_flash_hw.h"
 #include "tars_app.h"
 #include "tars_crc.h"
 #include "tars_platform.h"
-#include "main.h"
-#include "stm32f4xx_hal_flash_ex.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -33,85 +34,13 @@ typedef struct {
 static tars_catalog_entry_t s_catalog[TARS_STORAGE_MAX_ENTRIES];
 static uint32_t s_catalog_count;
 static uint32_t s_sdram_exec_next;
-static uint32_t s_lua_pool_offset;
 static volatile uint8_t s_catalog_dirty;
 
 #define TARS_CATALOG_HDR_CRC_LEN  ((uint32_t)offsetof(tars_catalog_hdr_t, crc32))
 
-static void storage_flash_clear_flags(void)
-{
-  __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
-                         FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
-}
-
-static void storage_flash_flush_caches(void)
-{
-  FLASH_FlushCaches();
-}
-
-static tars_status_t storage_flash_erase_sector(uint32_t sector)
-{
-  FLASH_EraseInitTypeDef erase = {0};
-  uint32_t sector_error = 0U;
-  HAL_StatusTypeDef hal;
-
-  storage_flash_clear_flags();
-  HAL_FLASH_Unlock();
-
-  erase.TypeErase = FLASH_TYPEERASE_SECTORS;
-  erase.VoltageRange = FLASH_VOLTAGE_RANGE_3;
-  erase.Sector = sector;
-  erase.NbSectors = 1U;
-
-  hal = HAL_FLASHEx_Erase(&erase, &sector_error);
-  HAL_FLASH_Lock();
-
-  if (hal != HAL_OK)
-  {
-    return TARS_ERR_FLASH;
-  }
-
-  storage_flash_flush_caches();
-  return TARS_OK;
-}
-
-static tars_status_t storage_flash_program(uint32_t address, const uint8_t *data, uint32_t size)
-{
-  uint32_t i;
-  HAL_StatusTypeDef hal;
-
-  if ((data == NULL) || (size == 0U))
-  {
-    return TARS_ERR_PARAM;
-  }
-
-  storage_flash_clear_flags();
-  HAL_FLASH_Unlock();
-
-  for (i = 0U; i < size; i += 4U)
-  {
-    uint32_t word = 0xFFFFFFFFUL;
-    uint32_t remain = size - i;
-    uint32_t copy = (remain >= 4U) ? 4U : remain;
-
-    memcpy(&word, data + i, copy);
-    hal = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, address + i, word);
-
-    if (hal != HAL_OK)
-    {
-      HAL_FLASH_Lock();
-      return TARS_ERR_FLASH;
-    }
-  }
-
-  HAL_FLASH_Lock();
-  storage_flash_flush_caches();
-  return TARS_OK;
-}
-
 static uint32_t storage_catalog_compute_crc(const tars_catalog_hdr_t *hdr,
-                                          const tars_catalog_entry_t *entries,
-                                          uint32_t entry_count)
+                                            const tars_catalog_entry_t *entries,
+                                            uint32_t entry_count)
 {
   uint32_t crc = 0xFFFFFFFFUL;
 
@@ -122,36 +51,9 @@ static uint32_t storage_catalog_compute_crc(const tars_catalog_hdr_t *hdr,
   return crc ^ 0xFFFFFFFFUL;
 }
 
-static void storage_restore_lua_pool_offset(void)
+static tars_status_t storage_catalog_validate_buf(const tars_catalog_hdr_t *hdr,
+                                                  const tars_catalog_entry_t *entries)
 {
-  uint32_t i;
-
-  for (i = 0U; i < s_catalog_count; i++)
-  {
-    if (s_catalog[i].app_type != TARS_APP_TYPE_LUA)
-    {
-      continue;
-    }
-
-    if (s_catalog[i].blob_addr < TARS_LUA_POOL_BASE)
-    {
-      continue;
-    }
-
-    uint32_t end = (s_catalog[i].blob_addr - TARS_LUA_POOL_BASE) + s_catalog[i].blob_size;
-
-    if (end > s_lua_pool_offset)
-    {
-      s_lua_pool_offset = end;
-    }
-  }
-
-  s_lua_pool_offset = (s_lua_pool_offset + 3U) & ~3U;
-}
-
-static tars_status_t storage_catalog_validate(void)
-{
-  const tars_catalog_hdr_t *hdr = (const tars_catalog_hdr_t *)(const void *)TARS_CATALOG_BASE;
   uint32_t crc;
 
   if (hdr->magic != TARS_CATALOG_MAGIC)
@@ -164,11 +66,7 @@ static tars_status_t storage_catalog_validate(void)
     return TARS_ERR_CRC;
   }
 
-  crc = storage_catalog_compute_crc(hdr,
-                                    (const tars_catalog_entry_t *)(const void *)(TARS_CATALOG_BASE +
-                                                                                 sizeof(tars_catalog_hdr_t)),
-                                    hdr->entry_count);
-
+  crc = storage_catalog_compute_crc(hdr, entries, hdr->entry_count);
   if (crc != hdr->crc32)
   {
     return TARS_ERR_CRC;
@@ -180,64 +78,84 @@ static tars_status_t storage_catalog_validate(void)
 static tars_status_t storage_catalog_save(void)
 {
   tars_catalog_hdr_t hdr = {0};
-  tars_status_t status;
-  const tars_catalog_hdr_t *flash_hdr;
+  uint8_t file_buf[sizeof(tars_catalog_hdr_t) +
+                   TARS_STORAGE_MAX_ENTRIES * sizeof(tars_catalog_entry_t)];
 
   hdr.magic = TARS_CATALOG_MAGIC;
   hdr.version = 1U;
   hdr.entry_count = s_catalog_count;
   hdr.crc32 = storage_catalog_compute_crc(&hdr, s_catalog, s_catalog_count);
 
-  status = storage_flash_erase_sector(TARS_CATALOG_SECTOR);
-  if (status != TARS_OK)
-  {
-    return status;
-  }
-
-  status = storage_flash_program(TARS_CATALOG_BASE, (const uint8_t *)(const void *)&hdr, sizeof(hdr));
-  if (status != TARS_OK)
-  {
-    return status;
-  }
-
+  memcpy(file_buf, &hdr, sizeof(hdr));
   if (s_catalog_count > 0U)
   {
-    status = storage_flash_program(TARS_CATALOG_BASE + sizeof(tars_catalog_hdr_t),
-                                   (const uint8_t *)(const void *)s_catalog,
-                                   s_catalog_count * (uint32_t)sizeof(tars_catalog_entry_t));
-    if (status != TARS_OK)
-    {
-      return status;
-    }
+    memcpy(file_buf + sizeof(hdr),
+           s_catalog,
+           s_catalog_count * sizeof(tars_catalog_entry_t));
   }
 
-  flash_hdr = (const tars_catalog_hdr_t *)(const void *)TARS_CATALOG_BASE;
-  if (flash_hdr->magic != TARS_CATALOG_MAGIC)
-  {
-    return TARS_ERR_FLASH;
-  }
-
-  return storage_catalog_validate();
+  return TarsLfs_WriteFile(TARS_LFS_PATH_CATALOG,
+                         file_buf,
+                         (uint32_t)(sizeof(hdr) +
+                                    s_catalog_count * sizeof(tars_catalog_entry_t)));
 }
+
+static tars_status_t storage_catalog_load(void)
+{
+  tars_catalog_hdr_t hdr;
+  uint8_t file_buf[sizeof(tars_catalog_hdr_t) +
+                   TARS_STORAGE_MAX_ENTRIES * sizeof(tars_catalog_entry_t)];
+  uint32_t file_size = 0U;
+  tars_status_t status;
+
+  status = TarsLfs_ReadFile(TARS_LFS_PATH_CATALOG, file_buf, sizeof(file_buf), &file_size);
+  if (status != TARS_OK)
+  {
+    return status;
+  }
+
+  if (file_size < sizeof(tars_catalog_hdr_t))
+  {
+    return TARS_ERR_CRC;
+  }
+
+  memcpy(&hdr, file_buf, sizeof(hdr));
+  status = storage_catalog_validate_buf(
+    &hdr,
+    (const tars_catalog_entry_t *)(const void *)(file_buf + sizeof(tars_catalog_hdr_t)));
+  if (status != TARS_OK)
+  {
+    return status;
+  }
+
+  s_catalog_count = hdr.entry_count;
+  if (s_catalog_count > 0U)
+  {
+    memcpy(s_catalog,
+           file_buf + sizeof(tars_catalog_hdr_t),
+           s_catalog_count * sizeof(tars_catalog_entry_t));
+  }
+
+  return TARS_OK;
+}
+
+static uint8_t s_storage_inited;
 
 void TarsStorage_Init(void)
 {
-  const tars_catalog_hdr_t *hdr = (const tars_catalog_hdr_t *)(const void *)TARS_CATALOG_BASE;
+  if (s_storage_inited != 0U)
+  {
+    return;
+  }
 
   s_catalog_count = 0U;
   s_sdram_exec_next = 0U;
-  s_lua_pool_offset = 0U;
   s_catalog_dirty = 0U;
   memset(s_catalog, 0, sizeof(s_catalog));
 
-  if (storage_catalog_validate() == TARS_OK)
-  {
-    s_catalog_count = hdr->entry_count;
-    memcpy(s_catalog,
-           (const void *)(TARS_CATALOG_BASE + sizeof(tars_catalog_hdr_t)),
-           s_catalog_count * sizeof(tars_catalog_entry_t));
-    storage_restore_lua_pool_offset();
-  }
+  (void)TarsLfs_Init();
+  (void)storage_catalog_load();
+  s_storage_inited = 1U;
 }
 
 int32_t TarsStorage_FindByName(const char *name)
@@ -303,20 +221,6 @@ tars_status_t TarsStorage_AllocSdramExec(uint32_t size, uint32_t *addr_out)
   return TARS_OK;
 }
 
-tars_status_t TarsStorage_AllocLuaOffset(uint32_t size, uint32_t *offset_out)
-{
-  uint32_t aligned = (size + 3U) & ~3U;
-
-  if ((s_lua_pool_offset + aligned) > TARS_LUA_POOL_SIZE)
-  {
-    return TARS_ERR_NO_SLOT;
-  }
-
-  *offset_out = s_lua_pool_offset;
-  s_lua_pool_offset += aligned;
-  return TARS_OK;
-}
-
 tars_status_t TarsStorage_WriteNativeSlot(uint32_t slot_index,
                                           const uint8_t *blob,
                                           uint32_t blob_size)
@@ -331,54 +235,56 @@ tars_status_t TarsStorage_WriteNativeSlot(uint32_t slot_index,
 
   dst = TarsNativeSlotAddress(slot_index);
 
-  if (storage_flash_erase_sector(8U + slot_index) != TARS_OK)
+  if (TarsFlash_EraseSector(TarsNativeSlotSector(slot_index)) != TARS_OK)
   {
     return TARS_ERR_FLASH;
   }
 
-  return storage_flash_program(dst, blob, blob_size);
+  return TarsFlash_Program(dst, blob, blob_size);
 }
 
-static uint8_t s_lua_pool_erased;
-
-tars_status_t TarsStorage_PrepareLuaWrite(uint32_t offset, uint32_t size)
+tars_status_t TarsStorage_WriteLuaBlob(const char *name,
+                                       const uint8_t *blob,
+                                       uint32_t blob_size)
 {
-  if ((offset + size) > TARS_LUA_POOL_SIZE)
+  char path[48];
+
+  if ((name == NULL) || (blob == NULL) || (blob_size == 0U))
   {
     return TARS_ERR_PARAM;
   }
 
-  if (s_lua_pool_erased != 0U)
-  {
-    return TARS_OK;
-  }
-
-  if (offset > 0U)
-  {
-    s_lua_pool_erased = 1U;
-    return TARS_OK;
-  }
-
-  if (storage_flash_erase_sector(TARS_LUA_POOL_SECTOR) != TARS_OK)
-  {
-    return TARS_ERR_FLASH;
-  }
-
-  s_lua_pool_erased = 1U;
-  s_lua_pool_offset = 0U;
-  return TARS_OK;
+  (void)snprintf(path, sizeof(path), "%s/%s.tlua", TARS_LFS_PATH_APPS, name);
+  return TarsLfs_WriteFile(path, blob, blob_size);
 }
 
-tars_status_t TarsStorage_WriteLuaPool(uint32_t offset,
-                                       const uint8_t *data,
-                                       uint32_t size)
+tars_status_t TarsStorage_ReadLuaBlob(const char *name,
+                                      uint8_t *blob,
+                                      uint32_t max_size,
+                                      uint32_t *out_size)
 {
-  if ((data == NULL) || ((offset + size) > TARS_LUA_POOL_SIZE))
+  char path[48];
+
+  if ((name == NULL) || (blob == NULL) || (max_size == 0U))
   {
     return TARS_ERR_PARAM;
   }
 
-  return storage_flash_program(TARS_LUA_POOL_BASE + offset, data, size);
+  (void)snprintf(path, sizeof(path), "%s/%s.tlua", TARS_LFS_PATH_APPS, name);
+  return TarsLfs_ReadFile(path, blob, max_size, out_size);
+}
+
+tars_status_t TarsStorage_RemoveLuaBlob(const char *name)
+{
+  char path[48];
+
+  if (name == NULL)
+  {
+    return TARS_ERR_PARAM;
+  }
+
+  (void)snprintf(path, sizeof(path), "%s/%s.tlua", TARS_LFS_PATH_APPS, name);
+  return TarsLfs_RemoveFile(path);
 }
 
 tars_status_t TarsStorage_AddEntry(const tars_storage_entry_t *entry)
@@ -405,13 +311,25 @@ tars_status_t TarsStorage_AddEntry(const tars_storage_entry_t *entry)
 
 tars_status_t TarsStorage_UpdateEntry(uint32_t index, const tars_storage_entry_t *entry)
 {
+  tars_status_t status;
+  tars_catalog_entry_t prev;
+
   if ((entry == NULL) || (index >= s_catalog_count))
   {
     return TARS_ERR_PARAM;
   }
 
+  prev = s_catalog[index];
   s_catalog[index] = *(const tars_catalog_entry_t *)(const void *)entry;
-  s_catalog_dirty = 1U;
+
+  status = storage_catalog_save();
+  if (status != TARS_OK)
+  {
+    s_catalog[index] = prev;
+    return status;
+  }
+
+  s_catalog_dirty = 0U;
   return TARS_OK;
 }
 
@@ -466,10 +384,17 @@ tars_status_t TarsStorage_RemoveEntry(const char *name)
   uint32_t i;
   tars_status_t status;
   uint32_t old_count;
+  const tars_storage_entry_t *entry;
 
   if (idx < 0)
   {
     return TARS_ERR_NOT_FOUND;
+  }
+
+  entry = TarsStorage_GetEntry((uint32_t)idx);
+  if ((entry != NULL) && (entry->app_type == TARS_APP_TYPE_LUA))
+  {
+    (void)TarsStorage_RemoveLuaBlob(name);
   }
 
   old_count = s_catalog_count;
@@ -498,37 +423,20 @@ const uint8_t *TarsStorage_GetBlobPtr(uint32_t blob_addr)
 
 void TarsStorage_GetCatalogDiag(tars_catalog_diag_t *diag)
 {
-  const tars_catalog_hdr_t *hdr = (const tars_catalog_hdr_t *)(const void *)TARS_CATALOG_BASE;
-  tars_status_t status;
+  tars_catalog_hdr_t hdr = {0};
 
   if (diag == NULL)
   {
     return;
   }
 
-  diag->magic = hdr->magic;
-  diag->entry_count = hdr->entry_count;
-  diag->stored_crc = hdr->crc32;
-  diag->validate_status = storage_catalog_validate();
+  hdr.magic = TARS_CATALOG_MAGIC;
+  hdr.entry_count = s_catalog_count;
+  hdr.crc32 = storage_catalog_compute_crc(&hdr, s_catalog, s_catalog_count);
 
-  if (hdr->magic != TARS_CATALOG_MAGIC)
-  {
-    diag->computed_crc = 0U;
-    return;
-  }
-
-  status = diag->validate_status;
-  if (status == TARS_ERR_CRC)
-  {
-    diag->computed_crc = storage_catalog_compute_crc(
-      hdr,
-      (const tars_catalog_entry_t *)(const void *)(TARS_CATALOG_BASE + sizeof(tars_catalog_hdr_t)),
-      hdr->entry_count);
-  }
-  else
-  {
-    diag->computed_crc = hdr->crc32;
-  }
-
-  (void)status;
+  diag->magic = hdr.magic;
+  diag->entry_count = hdr.entry_count;
+  diag->stored_crc = hdr.crc32;
+  diag->computed_crc = hdr.crc32;
+  diag->validate_status = storage_catalog_validate_buf(&hdr, s_catalog);
 }
