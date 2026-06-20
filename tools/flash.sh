@@ -72,7 +72,14 @@ if [[ ! -f "$TCL" ]]; then
 fi
 
 echo "==> build (Debug)"
-cmake --build "$BUILD_DIR" --target tars
+if command -v cmake >/dev/null 2>&1; then
+  cmake --build "$BUILD_DIR" --target tars
+elif [[ -f "$BUILD_DIR/build.ninja" ]] && command -v ninja >/dev/null 2>&1; then
+  (cd "$BUILD_DIR" && ninja tars)
+else
+  echo "need cmake or ninja in $BUILD_DIR" >&2
+  exit 1
+fi
 
 if [[ ! -f "$ELF" ]]; then
   echo "missing ELF: $ELF" >&2

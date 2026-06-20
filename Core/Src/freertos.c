@@ -34,6 +34,8 @@
 #include "tars_storage.h"
 #include "tars_ota.h"
 #include "tars_hal.h"
+#include "tars_resource.h"
+#include "tars_probe.h"
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -42,6 +44,8 @@ osThreadId shellTaskHandle;
 /* USER CODE BEGIN Variables */
 osThreadId eluaTaskHandle;
 osThreadId schedulerTaskHandle;
+osThreadId resourceTaskHandle;
+osThreadId probeTaskHandle;
 /* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -50,6 +54,8 @@ void StartShellTask(void const * argument);
 /* USER CODE BEGIN FunctionPrototypes */
 void StartEluaTask(void const * argument);
 void StartSchedulerTask(void const * argument);
+void StartResourceTask(void const * argument);
+void StartProbeTask(void const * argument);
 /* USER CODE END FunctionPrototypes */
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -113,6 +119,15 @@ void MX_FREERTOS_Init(void) {
 
   osThreadDef(schedulerTask, StartSchedulerTask, osPriorityLow, 0, 4096);
   schedulerTaskHandle = osThreadCreate(osThread(schedulerTask), NULL);
+
+  /* Hardware resource layer: dedicated fixed-cadence task, runs above the
+   * cooperative app scheduler so input sampling/debounce stays responsive. */
+  osThreadDef(resourceTask, StartResourceTask, osPriorityAboveNormal, 0, 1024);
+  resourceTaskHandle = osThreadCreate(osThread(resourceTask), NULL);
+
+  /* Probe: SCPI telemetry + trigger-capture over USART1 (ST-Link VCP). */
+  osThreadDef(probeTask, StartProbeTask, osPriorityLow, 0, 2048);
+  probeTaskHandle = osThreadCreate(osThread(probeTask), NULL);
   /* USER CODE END RTOS_THREADS */
 }
 
@@ -148,5 +163,15 @@ void StartEluaTask(void const * argument)
 void StartSchedulerTask(void const * argument)
 {
   TarsApp_SchedulerTask(argument);
+}
+
+void StartResourceTask(void const * argument)
+{
+  TarsResource_Task(argument);
+}
+
+void StartProbeTask(void const * argument)
+{
+  TarsProbe_Task(argument);
 }
 /* USER CODE END Application */

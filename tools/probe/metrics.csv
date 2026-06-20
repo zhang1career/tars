@@ -1,0 +1,18 @@
+@board,stm32f429i-disc1
+
+# Probe telemetry metrics, defined at compile time.
+# Each row: SCPI leaf name, unit, provider token, integer arg.
+# Provider tokens map to TARS_PROBE_SRC_<token> in tars_probe_metrics.h and are
+# resolved by TarsProbeMetrics_Read(). Add a row here + a case there to extend.
+[metrics]
+name,unit,provider,arg
+uptime_ms,ms,UPTIME,0
+tick_hz,Hz,TICK_HZ,0
+heap_free,bytes,HEAP_FREE,0
+heap_min_free,bytes,HEAP_MIN_FREE,0
+lua_heap_used,bytes,LUA_HEAP_USED,0
+task_count,count,TASK_COUNT,0
+motor_pos,deg,MOTOR_POS,0
+motor_vel,rpm,MOTOR_VEL,0
+motor_loops,count,MOTOR_LOOPS,0
+b1_state,bool,BUTTON,0

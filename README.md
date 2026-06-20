@@ -24,6 +24,7 @@ sys top
 ## Docs
 
 - [MCU shell & pin map](docs/mcu-shell.md)
+- [Probe (SCPI telemetry & capture)](docs/probe.md)
 - [App formats](docs/app-format.md)
 - [Flash layout](docs/flash-layout.md)
 - [Scheduling](docs/scheduling.md)

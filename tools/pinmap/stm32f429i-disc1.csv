@@ -19,3 +19,4 @@ i2c1_sda,pb9
 pin,alias
 pg13,ld3
 pg14,ld4
+pa0,b1

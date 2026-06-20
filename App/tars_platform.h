@@ -58,6 +58,12 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 #define TARS_LUA_HEAP_BASE        0xD00E0000UL
 #define TARS_LUA_HEAP_SIZE        (128U * 1024U)
 
+/* --- Probe capture buffer (external SDRAM) ---
+ * Trigger-capture stores high-rate samples here via DMA, then streams them
+ * out over UART. Lives above the Lua heap in the free SDRAM region. */
+#define TARS_PROBE_CAP_BASE       0xD0100000UL
+#define TARS_PROBE_CAP_SIZE       (256U * 1024U)
+
 /* --- Scheduler --- */
 #define TARS_SCHED_SLICE_COUNT    8U
 #define TARS_SCHED_SLICE_MS       100U

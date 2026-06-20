@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "usb_otg.h"
 #include "usbd_conf.h"
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,7 +64,7 @@ extern LTDC_HandleTypeDef hltdc;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
-
+extern DMA_HandleTypeDef hdma_usart1_tx;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -228,5 +229,21 @@ void DMA2D_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief This function handles USART1 global interrupt (probe SCPI RX/TX).
+  */
+void USART1_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&huart1);
+}
+
+/**
+  * @brief This function handles DMA2 Stream7 global interrupt (USART1 TX DMA).
+  */
+void DMA2_Stream7_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_usart1_tx);
+}
 
 /* USER CODE END 1 */

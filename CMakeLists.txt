@@ -63,6 +63,24 @@ add_custom_command(
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${TARS_PINMAP_GEN_C})
 set_source_files_properties(${TARS_PINMAP_GEN_C} PROPERTIES GENERATED TRUE)
 
+# Probe metrics: CSV -> generated C (see tools/probe/)
+set(TARS_PROBE_CSV "${CMAKE_SOURCE_DIR}/tools/probe/metrics.csv")
+set(TARS_PROBE_GEN_DIR "${CMAKE_SOURCE_DIR}/generated/probe")
+set(TARS_PROBE_GEN_C "${TARS_PROBE_GEN_DIR}/metrics.c")
+
+add_custom_command(
+    OUTPUT ${TARS_PROBE_GEN_C}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TARS_PROBE_GEN_DIR}
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/probe/probe-gen.py
+            ${TARS_PROBE_CSV} -o ${TARS_PROBE_GEN_C}
+    DEPENDS ${TARS_PROBE_CSV} ${CMAKE_SOURCE_DIR}/tools/probe/probe-gen.py
+    COMMENT "Generating probe metrics metrics.c"
+    VERBATIM
+)
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${TARS_PROBE_GEN_C})
+set_source_files_properties(${TARS_PROBE_GEN_C} PROPERTIES GENERATED TRUE)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths

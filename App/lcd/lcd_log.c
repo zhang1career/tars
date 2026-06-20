@@ -1,5 +1,7 @@
 #include "lcd_log.h"
 #include "lcd_viewport.h"
+#include "lcd_fb.h"
+#include "lcd_text.h"
 #include "ili9341.h"
 #include "ltdc.h"
 #include "fonts.h"
@@ -9,9 +11,6 @@
 #include <stdarg.h>
 #include <string.h>
 
-#define LCD_FB_ADDR           0xD0000000UL
-#define LCD_WIDTH             240U
-#define LCD_HEIGHT            320U
 #define LCD_LOG_TOP             16U
 #define LCD_LOG_COLS            40U
 #define LCD_LOG_ROWS            28U
@@ -25,15 +24,14 @@
 #define LCD_COLOR_CYAN        0x07FFU
 #define LCD_COLOR_RED         0xF800U
 
-static uint16_t *s_framebuffer;
+static uint16_t *s_draw_fb;
 static char s_log_lines[LCD_LOG_ROWS][LCD_LOG_COLS + 1U];
+static lcd_text_row_cache_t s_log_display_cache[LCD_LOG_ROWS];
 static char s_status_banner[LCD_LOG_COLS + 1U] = "TARS USB Log";
+static char s_banner_cache[LCD_LOG_COLS + 1U];
 static uint16_t s_log_count;
-static uint16_t s_cursor_x;
-static uint16_t s_cursor_y;
 static uint16_t s_text_color = LCD_COLOR_WHITE;
 static uint16_t s_bg_color = LCD_COLOR_BLACK;
-static volatile uint8_t s_vblank_ready;
 static osMutexId s_lcd_mutex;
 
 osMutexDef(lcd_log_mutex);
@@ -54,41 +52,37 @@ static void lcd_log_unlock(void)
   }
 }
 
-void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc)
+static void lcd_log_begin_frame(int copy_display)
 {
-  (void)hltdc;
-  s_vblank_ready = 1U;
+  LcdFb_BeginFrame();
+  s_draw_fb = LcdFb_GetDrawBuffer();
+
+  if (copy_display != 0)
+  {
+    LcdFb_CopyDisplayToDraw();
+  }
 }
 
-static void lcd_wait_vblank(void)
+static void lcd_log_end_frame(void)
 {
-  s_vblank_ready = 0U;
-  (void)HAL_LTDC_ProgramLineEvent(&hltdc, (uint32_t)(LCD_HEIGHT - 1U));
-
-  uint32_t start = HAL_GetTick();
-  while ((s_vblank_ready == 0U) && ((HAL_GetTick() - start) < 50U))
-  {
-  }
+  LcdFb_EndFrame();
 }
 
 static void lcd_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
 {
-  if (x >= LCD_WIDTH || y >= LCD_HEIGHT)
+  if ((s_draw_fb == NULL) || (x >= LCD_FB_WIDTH) || (y >= LCD_FB_HEIGHT))
   {
     return;
   }
 
-  s_framebuffer[(y * LCD_WIDTH) + x] = color;
+  s_draw_fb[(y * LCD_FB_WIDTH) + x] = color;
 }
 
-static void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
+static void lcd_fill_rect_cpu(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
 {
-  for (uint16_t row = 0U; row < h; row++)
+  if (s_draw_fb != NULL)
   {
-    for (uint16_t col = 0U; col < w; col++)
-    {
-      lcd_draw_pixel(x + col, y + row, color);
-    }
+    LcdFb_FillRectOn(s_draw_fb, x, y, w, h, color);
   }
 }
 
@@ -120,7 +114,7 @@ static void lcd_draw_string(uint16_t x, uint16_t y, const char *text)
 {
   uint16_t cx = x;
 
-  while ((*text != '\0') && (cx + LCD_LOG_CELL_W <= LCD_WIDTH))
+  while ((*text != '\0') && (cx + LCD_LOG_CELL_W <= LCD_FB_WIDTH))
   {
     lcd_draw_char(cx, y, *text);
     cx = (uint16_t)(cx + LCD_LOG_CELL_W);
@@ -130,21 +124,72 @@ static void lcd_draw_string(uint16_t x, uint16_t y, const char *text)
 
 static void lcd_draw_header(void)
 {
-  lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_LOG_TOP, s_bg_color);
+  lcd_fill_rect_cpu(0U, 0U, LCD_FB_WIDTH, LCD_LOG_TOP, s_bg_color);
   lcd_draw_string(4U, 2U, s_status_banner);
 }
 
-static void lcd_redraw_log_region(void);
-static int lcd_log_should_draw(void);
-
 static int lcd_log_should_draw(void)
 {
-  return LcdViewport_IsLogPageActive();
+  return (LcdViewport_GetPage() == LCD_VIEWPORT_PAGE_LOG) ? 1 : 0;
+}
+
+static void lcd_log_build_visible_rows(lcd_text_row_t *rows, uint16_t *count)
+{
+  uint16_t start = 0U;
+  uint16_t n = 0U;
+
+  if (s_log_count > LCD_LOG_ROWS)
+  {
+    start = (uint16_t)(s_log_count - LCD_LOG_ROWS);
+  }
+
+  for (uint16_t i = 0U; i < LCD_LOG_ROWS; i++)
+  {
+    if ((start + i) >= s_log_count)
+    {
+      break;
+    }
+
+    rows[n].x = 2U;
+    rows[n].y = (uint16_t)(LCD_LOG_TOP + (i * LCD_LOG_CELL_H));
+    rows[n].row_h = LCD_LOG_CELL_H;
+    rows[n].text = s_log_lines[start + i];
+    n++;
+  }
+
+  *count = n;
+}
+
+static void lcd_fill_content_area(void)
+{
+  lcd_fill_rect_cpu(0U,
+                    LCD_LOG_TOP,
+                    LCD_FB_WIDTH,
+                    (uint16_t)(LCD_FB_HEIGHT - LCD_LOG_TOP),
+                    s_bg_color);
+}
+
+static void lcd_log_paint_visible_rows(int copy_display)
+{
+  lcd_text_row_t rows[LCD_LOG_ROWS];
+  uint16_t count = 0U;
+
+  lcd_log_build_visible_rows(rows, &count);
+
+  lcd_log_begin_frame(copy_display);
+  lcd_draw_header();
+  lcd_fill_content_area();
+  strncpy(s_banner_cache, s_status_banner, LCD_LOG_COLS);
+  s_banner_cache[LCD_LOG_COLS] = '\0';
+  LcdText_DrawRowsUnlocked(rows, s_log_display_cache, count);
+  lcd_log_end_frame();
 }
 
 void LcdLog_RedrawLogRegion(void)
 {
-  lcd_redraw_log_region();
+  lcd_log_lock();
+  lcd_log_paint_visible_rows(0);
+  lcd_log_unlock();
 }
 
 void LcdLog_Lock(void)
@@ -164,17 +209,17 @@ void LcdLog_DrawString(uint16_t x, uint16_t y, const char *text)
 
 void LcdLog_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
 {
-  lcd_fill_rect(x, y, w, h, color);
+  lcd_fill_rect_cpu(x, y, w, h, color);
 }
 
 uint16_t LcdLog_GetWidth(void)
 {
-  return LCD_WIDTH;
+  return LCD_FB_WIDTH;
 }
 
 uint16_t LcdLog_GetHeight(void)
 {
-  return LCD_HEIGHT;
+  return LCD_FB_HEIGHT;
 }
 
 uint16_t LcdLog_GetLogTop(void)
@@ -187,74 +232,77 @@ uint16_t LcdLog_GetBgColor(void)
   return s_bg_color;
 }
 
-static void lcd_redraw_log_region(void)
-{
-  uint16_t start = 0U;
-
-  if (s_log_count > LCD_LOG_ROWS)
-  {
-    start = (uint16_t)(s_log_count - LCD_LOG_ROWS);
-  }
-
-  lcd_wait_vblank();
-  lcd_fill_rect(0U, LCD_LOG_TOP, LCD_WIDTH, (uint16_t)(LCD_HEIGHT - LCD_LOG_TOP), s_bg_color);
-
-  for (uint16_t i = 0U; i < LCD_LOG_ROWS; i++)
-  {
-    if ((start + i) >= s_log_count)
-    {
-      break;
-    }
-
-    lcd_draw_string(2U, (uint16_t)(LCD_LOG_TOP + (i * LCD_LOG_CELL_H)), s_log_lines[start + i]);
-  }
-}
-
-static void lcd_draw_log_line(uint16_t vis_row, const char *text)
-{
-  uint16_t y = (uint16_t)(LCD_LOG_TOP + (vis_row * LCD_LOG_CELL_H));
-
-  lcd_wait_vblank();
-  lcd_fill_rect(0U, y, LCD_WIDTH, LCD_LOG_CELL_H, s_bg_color);
-  lcd_draw_string(2U, y, text);
-}
-
 void LcdLog_Init(void)
 {
-  s_framebuffer = (uint16_t *)LCD_FB_ADDR;
   s_log_count = 0U;
-  s_cursor_x = 0U;
-  s_cursor_y = 0U;
 
   if (s_lcd_mutex == NULL)
   {
     s_lcd_mutex = osMutexCreate(osMutex(lcd_log_mutex));
   }
 
+  LcdFb_Init();
+  s_draw_fb = (uint16_t *)LcdFb_GetDisplayBuffer();
+  LcdText_ResetCache(s_log_display_cache, LCD_LOG_ROWS);
+  s_banner_cache[0] = '\0';
+
   ili9341_Init();
-  lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, s_bg_color);
+  lcd_fill_rect_cpu(0U, 0U, LCD_FB_WIDTH, LCD_FB_HEIGHT, s_bg_color);
   lcd_draw_header();
   LcdViewport_Init();
   MX_LTDC_Init();
-  (void)HAL_LTDC_ProgramLineEvent(&hltdc, (uint32_t)(LCD_HEIGHT - 1U));
+  (void)HAL_LTDC_ProgramLineEvent(&hltdc, 0U);
   ili9341_DisplayOn();
 
   memset(s_log_lines, 0, sizeof(s_log_lines));
   LcdLog_WriteLine("LCD log ready");
 }
 
-void LcdLog_SetStatusBanner(const char *line)
+void LcdLog_SetStatusBannerText(const char *line)
 {
   if (line == NULL)
   {
     line = "TARS USB Log";
   }
 
-  lcd_log_lock();
   strncpy(s_status_banner, line, LCD_LOG_COLS);
   s_status_banner[LCD_LOG_COLS] = '\0';
-  lcd_wait_vblank();
+}
+
+void LcdLog_DrawHeader(void)
+{
   lcd_draw_header();
+}
+
+void LcdLog_FillContentArea(void)
+{
+  lcd_fill_content_area();
+}
+
+void LcdLog_BeginComposeFrame(int copy_display)
+{
+  lcd_log_begin_frame(copy_display);
+}
+
+void LcdLog_EndComposeFrame(void)
+{
+  lcd_log_end_frame();
+}
+
+void LcdLog_SetStatusBanner(const char *line)
+{
+  lcd_log_lock();
+  LcdLog_SetStatusBannerText(line);
+
+  if (strcmp(s_status_banner, s_banner_cache) != 0)
+  {
+    lcd_log_begin_frame(1);
+    lcd_draw_header();
+    strncpy(s_banner_cache, s_status_banner, LCD_LOG_COLS);
+    s_banner_cache[LCD_LOG_COLS] = '\0';
+    lcd_log_end_frame();
+  }
+
   lcd_log_unlock();
 }
 
@@ -263,11 +311,14 @@ void LcdLog_Clear(void)
   lcd_log_lock();
   s_log_count = 0U;
   memset(s_log_lines, 0, sizeof(s_log_lines));
+  LcdText_ResetCache(s_log_display_cache, LCD_LOG_ROWS);
 
   if (lcd_log_should_draw() != 0)
   {
-    lcd_wait_vblank();
-    lcd_fill_rect(0U, LCD_LOG_TOP, LCD_WIDTH, (uint16_t)(LCD_HEIGHT - LCD_LOG_TOP), s_bg_color);
+    lcd_log_begin_frame(1);
+    lcd_draw_header();
+    lcd_fill_content_area();
+    lcd_log_end_frame();
   }
 
   lcd_log_unlock();
@@ -275,6 +326,9 @@ void LcdLog_Clear(void)
 
 void LcdLog_WriteLine(const char *line)
 {
+  lcd_text_row_t rows[LCD_LOG_ROWS];
+  uint16_t count = 0U;
+
   if (line == NULL)
   {
     return;
@@ -287,22 +341,28 @@ void LcdLog_WriteLine(const char *line)
     strncpy(s_log_lines[s_log_count], line, LCD_LOG_COLS);
     s_log_lines[s_log_count][LCD_LOG_COLS] = '\0';
     s_log_count++;
-
-    if (lcd_log_should_draw() != 0)
-    {
-      lcd_draw_log_line((uint16_t)(s_log_count - 1U), s_log_lines[s_log_count - 1U]);
-    }
   }
   else
   {
     memmove(s_log_lines[0], s_log_lines[1], sizeof(s_log_lines[0]) * (LCD_LOG_ROWS - 1U));
     strncpy(s_log_lines[LCD_LOG_ROWS - 1U], line, LCD_LOG_COLS);
     s_log_lines[LCD_LOG_ROWS - 1U][LCD_LOG_COLS] = '\0';
+  }
 
-    if (lcd_log_should_draw() != 0)
+  if (lcd_log_should_draw() != 0)
+  {
+    lcd_log_build_visible_rows(rows, &count);
+    lcd_log_begin_frame(1);
+
+    if (strcmp(s_status_banner, s_banner_cache) != 0)
     {
-      lcd_redraw_log_region();
+      lcd_draw_header();
+      strncpy(s_banner_cache, s_status_banner, LCD_LOG_COLS);
+      s_banner_cache[LCD_LOG_COLS] = '\0';
     }
+
+    LcdText_UpdateRowsUnlocked(rows, s_log_display_cache, count);
+    lcd_log_end_frame();
   }
 
   lcd_log_unlock();

@@ -1,34 +1,17 @@
 #include "tars_mcu.h"
 #include "tars_mcu_pinmap.h"
+#include "tars_resource.h"
 #include "main.h"
 #include <stdio.h>
 
 int TarsMcu_GpioWrite(const char *pin_name, int value)
 {
-  GPIO_TypeDef *port = NULL;
-  uint16_t pin = 0U;
-
-  if (TarsMcuPinmap_ResolveGpio(pin_name, &port, &pin) != 0)
-  {
-    return -1;
-  }
-
-  HAL_GPIO_WritePin(port, pin, (value != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-  return 0;
+  return TarsResource_GpioWrite(pin_name, value);
 }
 
 int TarsMcu_GpioRead(const char *pin_name, int *value_out)
 {
-  GPIO_TypeDef *port = NULL;
-  uint16_t pin = 0U;
-
-  if ((value_out == NULL) || (TarsMcuPinmap_ResolveGpio(pin_name, &port, &pin) != 0))
-  {
-    return -1;
-  }
-
-  *value_out = (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1 : 0;
-  return 0;
+  return TarsResource_GpioRead(pin_name, value_out);
 }
 
 void TarsMcu_FormatInfo(char *out, uint32_t out_size)

@@ -9,16 +9,7 @@ static void viewport_init(const tars_api_t *api)
 
 static void viewport_tick(void)
 {
-  LcdViewport_PollInput();
-
-  if (LcdViewport_GetPage() == LCD_VIEWPORT_PAGE_MOTOR)
-  {
-    LcdViewport_DrawCurrentPage();
-  }
-  else
-  {
-    LcdLog_SetStatusBanner("page:LOG");
-  }
+  LcdViewport_UpdateCurrentPage();
 }
 
 static void viewport_release(void)
