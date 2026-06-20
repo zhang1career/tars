@@ -3,6 +3,7 @@
 #include "ltdc.h"
 #include "fonts.h"
 #include "main.h"
+#include "cmsis_os.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -25,12 +26,32 @@
 
 static uint16_t *s_framebuffer;
 static char s_log_lines[LCD_LOG_ROWS][LCD_LOG_COLS + 1U];
+static char s_status_banner[LCD_LOG_COLS + 1U] = "TARS USB Log";
 static uint16_t s_log_count;
 static uint16_t s_cursor_x;
 static uint16_t s_cursor_y;
 static uint16_t s_text_color = LCD_COLOR_WHITE;
 static uint16_t s_bg_color = LCD_COLOR_BLACK;
 static volatile uint8_t s_vblank_ready;
+static osMutexId s_lcd_mutex;
+
+osMutexDef(lcd_log_mutex);
+
+static void lcd_log_lock(void)
+{
+  if (s_lcd_mutex != NULL)
+  {
+    (void)osMutexWait(s_lcd_mutex, osWaitForever);
+  }
+}
+
+static void lcd_log_unlock(void)
+{
+  if (s_lcd_mutex != NULL)
+  {
+    (void)osMutexRelease(s_lcd_mutex);
+  }
+}
 
 void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc)
 {
@@ -109,7 +130,7 @@ static void lcd_draw_string(uint16_t x, uint16_t y, const char *text)
 static void lcd_draw_header(void)
 {
   lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_LOG_TOP, s_bg_color);
-  lcd_draw_string(4U, 2U, "TARS USB Log");
+  lcd_draw_string(4U, 2U, s_status_banner);
 }
 
 static void lcd_redraw_log_region(void)
@@ -151,6 +172,11 @@ void LcdLog_Init(void)
   s_cursor_x = 0U;
   s_cursor_y = 0U;
 
+  if (s_lcd_mutex == NULL)
+  {
+    s_lcd_mutex = osMutexCreate(osMutex(lcd_log_mutex));
+  }
+
   ili9341_Init();
   lcd_fill_rect(0U, 0U, LCD_WIDTH, LCD_HEIGHT, s_bg_color);
   lcd_draw_header();
@@ -162,12 +188,29 @@ void LcdLog_Init(void)
   LcdLog_WriteLine("LCD log ready");
 }
 
+void LcdLog_SetStatusBanner(const char *line)
+{
+  if (line == NULL)
+  {
+    line = "TARS USB Log";
+  }
+
+  lcd_log_lock();
+  strncpy(s_status_banner, line, LCD_LOG_COLS);
+  s_status_banner[LCD_LOG_COLS] = '\0';
+  lcd_wait_vblank();
+  lcd_draw_header();
+  lcd_log_unlock();
+}
+
 void LcdLog_Clear(void)
 {
+  lcd_log_lock();
   s_log_count = 0U;
   memset(s_log_lines, 0, sizeof(s_log_lines));
   lcd_wait_vblank();
   lcd_fill_rect(0U, LCD_LOG_TOP, LCD_WIDTH, (uint16_t)(LCD_HEIGHT - LCD_LOG_TOP), s_bg_color);
+  lcd_log_unlock();
 }
 
 void LcdLog_WriteLine(const char *line)
@@ -176,6 +219,8 @@ void LcdLog_WriteLine(const char *line)
   {
     return;
   }
+
+  lcd_log_lock();
 
   if (s_log_count < LCD_LOG_ROWS)
   {
@@ -191,6 +236,8 @@ void LcdLog_WriteLine(const char *line)
     s_log_lines[LCD_LOG_ROWS - 1U][LCD_LOG_COLS] = '\0';
     lcd_redraw_log_region();
   }
+
+  lcd_log_unlock();
 }
 
 void LcdLog_Printf(const char *fmt, ...)

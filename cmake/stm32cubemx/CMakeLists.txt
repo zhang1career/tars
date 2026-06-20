@@ -14,6 +14,8 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Utilities/Fonts
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/lua51
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Third_Party/littlefs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_HOST/App
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_HOST/Target
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App
@@ -42,6 +44,19 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/Target/usbd_cdc_if.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/usb_otg.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/shell.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_api.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_vfs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_crc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_loader.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_registry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_flash_hw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_lfs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_lua.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_ota.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_hal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../App/tars_sys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_io.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/lcd_log.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../App/lcd/ili9341.c
@@ -106,7 +121,6 @@ set(STM32_Drivers_Src
 
 # Drivers Midllewares
 
-
 set(FreeRTOS_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/croutine.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/event_groups.c
@@ -144,6 +158,7 @@ set(MX_LINK_LIBS
     FreeRTOS
     USB_Host_Library
     USB_Device_Library
+    lua51
 )
 # Interface library for includes and symbols
 add_library(stm32cubemx INTERFACE)
@@ -154,7 +169,6 @@ target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
 add_library(STM32_Drivers OBJECT)
 target_sources(STM32_Drivers PRIVATE ${STM32_Drivers_Src})
 target_link_libraries(STM32_Drivers PUBLIC stm32cubemx)
-
 
 # Create FreeRTOS static library
 add_library(FreeRTOS OBJECT)

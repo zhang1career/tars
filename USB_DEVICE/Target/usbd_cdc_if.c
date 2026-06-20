@@ -35,7 +35,6 @@ static int8_t CDC_Itf_DeInit(void)
 
 static int8_t CDC_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
 {
-  (void)pbuf;
   (void)length;
 
   switch (cmd)
