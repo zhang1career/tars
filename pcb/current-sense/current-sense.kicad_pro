@@ -829,7 +829,7 @@
     "last_paths": {
       "idf": "",
       "netlist": "",
-      "plot": "",
+      "plot": "../gerbers/current-sense-gerbers/",
       "specctra_dsn": "",
       "vrml": ""
     },
