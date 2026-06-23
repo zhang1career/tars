@@ -1,3 +1,5 @@
 (sym_lib_table
-  (lib (name current-sense-rescue)(type Legacy)(uri ${KIPRJMOD}/current-sense-rescue.lib)(options "")(descr ""))
+	(version 7)
+	(lib (name "current-sense-rescue") (type "Legacy") (uri "${KIPRJMOD}/current-sense-rescue.lib") (options "") (descr ""))
+	(lib (name "current-sense-cache") (type "Legacy") (uri "/Users/mini/Projects/hw-lab/little-bee/pcb/current-sense/current-sense-cache.lib") (options "") (descr "Legacy project cache library"))
 )

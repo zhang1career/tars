@@ -24,3 +24,5 @@ modeling/*.ans
 
 
 firmware/B1-firmware.X/dist/
+
+.history
