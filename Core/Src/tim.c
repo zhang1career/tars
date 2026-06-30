@@ -146,6 +146,10 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
 
   /* USER CODE END TIM1_MspInit 1 */
   }
+  else if (tim_pwmHandle->Instance == TIM9)
+  {
+    __HAL_RCC_TIM9_CLK_ENABLE();
+  }
 }
 
 void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)

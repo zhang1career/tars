@@ -1,4 +1,5 @@
 #include "tars_foc.h"
+#include "tars_res_mgr.h"
 #include "foc_step_stm32.h"
 #include "foc_step_stm32_initialize.h"
 #include "foc_params.h"
@@ -143,11 +144,21 @@ void TarsFoc_Enable(int enable)
 #if TARS_FOC_DRIVE_PWM
   if (s_enable != 0U)
   {
-    __HAL_TIM_MOE_ENABLE(&htim1);   /* energize the bridge */
+    if ((TarsResMgr_Acquire("tim1_ch1", TARS_OWNER_FOC) != 0) ||
+        (TarsResMgr_Acquire("tim1_ch2", TARS_OWNER_FOC) != 0) ||
+        (TarsResMgr_Acquire("tim1_ch3", TARS_OWNER_FOC) != 0))
+    {
+      s_enable = 0U;
+      return;
+    }
+    __HAL_TIM_MOE_ENABLE(&htim1);
   }
   else
   {
-    __HAL_TIM_MOE_DISABLE(&htim1);  /* tri-state all gate outputs */
+    __HAL_TIM_MOE_DISABLE(&htim1);
+    (void)TarsResMgr_Release("tim1_ch1", TARS_OWNER_FOC);
+    (void)TarsResMgr_Release("tim1_ch2", TARS_OWNER_FOC);
+    (void)TarsResMgr_Release("tim1_ch3", TARS_OWNER_FOC);
   }
 #endif
 }

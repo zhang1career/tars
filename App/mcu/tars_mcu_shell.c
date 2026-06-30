@@ -1,6 +1,9 @@
 #include "tars_mcu.h"
 #include "tars_mcu_pinmap.h"
+#include "tars_res_mgr.h"
+#include "tars_res_pwm.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int mcu_str_eq(const char *a, const char *b)
@@ -24,11 +27,12 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  out_size,
                  "mcu commands:\r\n"
                  "  mcu info\r\n"
-                 "  mcu gpio write <pgNN|alias> <0|1>\r\n"
-                 "  mcu gpio read <pgNN|alias>\r\n"
-                 "  mcu gpio list              (user GPIO on Morpho + LD3/LD4)\r\n"
+                 "  mcu res list|status <id>|grant <id> <owner>\r\n"
+                 "  mcu pwm list|status [ch]|enable <ch> <0|1>\r\n"
+                 "  mcu pwm duty <ch> <0-100>|freq <tim> <hz>\r\n"
+                 "  mcu gpio write|read|list\r\n"
                  "  mcu pinmap\r\n"
-                 "  mcu tim|adc|dac|can|uart status  (stub)\r\n");
+                 "  owners: none gpio pwm foc system\r\n");
 }
 
 static void mcu_shell_stub_status(const char *resource, char *out, uint32_t out_size)
@@ -83,8 +87,208 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
   if (mcu_str_eq(sub, "pinmap"))
   {
-    (void)snprintf(out, out_size, "mcu pinmap (%s):\r\n", TarsMcuPinmap_BoardId());
+    (void)snprintf(out, out_size, "mcu pinmap (%s) periph:\r\n", TarsMcuPinmap_BoardId());
     TarsMcuPinmap_FormatPeriphMap(out + strlen(out), out_size - (uint32_t)strlen(out));
+    (void)snprintf(out + strlen(out),
+                   out_size - (uint32_t)strlen(out),
+                   "pwm:\r\n");
+    TarsMcuPinmap_FormatPwmList(out + strlen(out), out_size - (uint32_t)strlen(out));
+    return 1;
+  }
+
+  if (mcu_str_eq(sub, "res"))
+  {
+    char id[24];
+    char owner_text[16];
+
+    if (mcu_str_eq(rest, "list"))
+    {
+      (void)snprintf(out, out_size, "mcu res list (%s):\r\n", TarsMcuPinmap_BoardId());
+      TarsResMgr_FormatList(out + strlen(out), out_size - (uint32_t)strlen(out));
+      return 1;
+    }
+
+    if (strncmp(rest, "status ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s", id) != 1)
+      {
+        (void)snprintf(out, out_size, "mcu res status: use res status <id>\r\n");
+        return 1;
+      }
+      TarsResMgr_FormatStatus(id, out, out_size);
+      return 1;
+    }
+
+    if (strncmp(rest, "grant ", 6) == 0)
+    {
+      tars_owner_t owner;
+
+      if (sscanf(rest + 6, "%23s %15s", id, owner_text) != 2)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu res grant: use res grant <id> <none|gpio|pwm|foc>\r\n");
+        return 1;
+      }
+
+      if (TarsOwner_Parse(owner_text, &owner) != 0)
+      {
+        (void)snprintf(out, out_size, "mcu res grant: bad owner %s\r\n", owner_text);
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_ResGrant(id, owner);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu res grant: id=%s err=%s\r\n",
+                         id,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu res grant: id=%s owner=%s\r\n",
+                         id,
+                         owner_text);
+        }
+      }
+      return 1;
+    }
+
+    (void)snprintf(out, out_size, "mcu res: use list|status|grant\r\n");
+    return 1;
+  }
+
+  if (mcu_str_eq(sub, "pwm"))
+  {
+    char ch[24];
+    char tim_id[16];
+    unsigned long val = 0UL;
+    float duty = 0.0f;
+
+    if (mcu_str_eq(rest, "list"))
+    {
+      (void)snprintf(out, out_size, "mcu pwm list (%s):\r\n", TarsMcuPinmap_BoardId());
+      TarsMcuPinmap_FormatPwmList(out + strlen(out), out_size - (uint32_t)strlen(out));
+      return 1;
+    }
+
+    if ((rest[0] == '\0') || (mcu_str_eq(rest, "status")))
+    {
+      (void)snprintf(out, out_size, "mcu pwm: use list|status <ch>|enable|duty|freq\r\n");
+      return 1;
+    }
+
+    if (strncmp(rest, "status ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s", ch) != 1)
+      {
+        (void)snprintf(out, out_size, "mcu pwm status: use pwm status <ch>\r\n");
+        return 1;
+      }
+      (void)TarsResPwm_GetStatus(ch, out, out_size);
+      return 1;
+    }
+
+    if (strncmp(rest, "enable ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s %lu", ch, &val) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu pwm enable: use enable <ch> <0|1>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_PwmEnable(ch, (int)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm enable: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm enable: ch=%s val=%lu\r\n",
+                         ch,
+                         val);
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "duty ", 5) == 0)
+    {
+      if (sscanf(rest + 5, "%23s %f", ch, &duty) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu pwm duty: use duty <ch> <0-100>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_PwmSetDuty(ch, duty);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm duty: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm duty: ch=%s duty=%.1f\r\n",
+                         ch,
+                         (double)duty);
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "freq ", 5) == 0)
+    {
+      if (sscanf(rest + 5, "%15s %lu", tim_id, &val) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu pwm freq: use freq <timN> <hz>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_PwmSetFreq(tim_id, (uint32_t)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm freq: tim=%s err=%s\r\n",
+                         tim_id,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm freq: tim=%s hz=%lu\r\n",
+                         tim_id,
+                         val);
+        }
+      }
+      return 1;
+    }
+
+    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq\r\n");
     return 1;
   }
 
@@ -114,16 +318,13 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       {
         int wr = TarsMcu_GpioWrite(pin_name, (int)val);
 
-        if (wr == -2)
+        if (wr != 0)
         {
           (void)snprintf(out,
                          out_size,
-                         "mcu gpio write: pin %s is input-only\r\n",
-                         pin_name);
-        }
-        else if (wr != 0)
-        {
-          (void)snprintf(out, out_size, "mcu gpio write: unknown pin %s\r\n", pin_name);
+                         "mcu gpio write: pin=%s err=%s\r\n",
+                         pin_name,
+                         TarsMcu_ResErrText(wr));
         }
         else
         {
@@ -149,7 +350,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
       if (TarsMcu_GpioRead(pin_name, &gpio_val) != 0)
       {
-        (void)snprintf(out, out_size, "mcu gpio read: unknown pin %s\r\n", pin_name);
+        (void)snprintf(out, out_size, "mcu gpio read: pin=%s err=scope\r\n", pin_name);
       }
       else
       {

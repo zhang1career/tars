@@ -113,6 +113,38 @@ static int l_tars_gpio_read(lua_State *L)
   return 1;
 }
 
+static int l_tars_pwm_enable(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  const char *channel = luaL_checkstring(L, 1);
+  int enable = (int)luaL_checkinteger(L, 2);
+  int st = 0;
+
+  if (api != NULL && api->pwm_enable != NULL)
+  {
+    st = api->pwm_enable(channel, enable);
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
+static int l_tars_pwm_duty(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  const char *channel = luaL_checkstring(L, 1);
+  float duty = (float)luaL_checknumber(L, 2);
+  int st = 0;
+
+  if (api != NULL && api->pwm_duty != NULL)
+  {
+    st = api->pwm_duty(channel, duty);
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
 static int l_tars_sleep(lua_State *L)
 {
   const tars_api_t *api = TarsApp_GetApi();
@@ -355,6 +387,8 @@ static int tars_lua_register_api(lua_State *L)
   static const luaL_Reg tars_api[] = {
     {"gpio_write", l_tars_gpio_write},
     {"gpio_read", l_tars_gpio_read},
+    {"pwm_enable", l_tars_pwm_enable},
+    {"pwm_duty", l_tars_pwm_duty},
     {"sleep", l_tars_sleep},
     {"log", l_tars_log},
     {"yield", l_tars_yield},

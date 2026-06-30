@@ -23,6 +23,16 @@ static int api_gpio_read(const char *pin_name)
   return value;
 }
 
+static int api_pwm_enable(const char *channel, int enable)
+{
+  return TarsMcu_PwmEnable(channel, enable);
+}
+
+static int api_pwm_duty(const char *channel, float duty_pct)
+{
+  return TarsMcu_PwmSetDuty(channel, duty_pct);
+}
+
 static void api_sleep_ms(uint32_t ms)
 {
   osDelay(ms);
@@ -39,6 +49,8 @@ void TarsApi_Init(void)
   s_api.api_version = TARS_API_VERSION;
   s_api.gpio_write = api_gpio_write;
   s_api.gpio_read = api_gpio_read;
+  s_api.pwm_enable = api_pwm_enable;
+  s_api.pwm_duty = api_pwm_duty;
   s_api.sleep_ms = api_sleep_ms;
   s_api.log = api_log;
 }

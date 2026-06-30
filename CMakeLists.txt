@@ -145,10 +145,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/shell.c
     ${CMAKE_SOURCE_DIR}/App/tars_api.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_gpio.c
+    ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pwm.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_shell.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pinmap.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_resource.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_gpio.c
+    ${CMAKE_SOURCE_DIR}/App/resource/tars_res_mgr.c
+    ${CMAKE_SOURCE_DIR}/App/resource/tars_res_pwm.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe_uart.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe_capture.c

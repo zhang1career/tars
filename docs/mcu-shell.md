@@ -1,46 +1,71 @@
 # MCU shell and pin mapping
 
-TARS exposes on-chip hardware through the **`mcu`** shell command. Peripheral names (e.g. `tim1_ch1`, `usart1_tx`) are MCU-generic; **which physical pin** they use is defined per board/package in a pin map CSV.
+TARS exposes on-chip hardware through the **`mcu`** shell command. Peripheral
+names are MCU-generic; physical pins come from the board pin map CSV.
 
-## Shell
+## Resource ownership
+
+Resources (GPIO pins, PWM channels) are listed in the pin map. At boot, each
+entry gets a **default owner** from CSV (`none|gpio|pwm|foc|system`). Runtime
+ownership lives in **RAM only** — it resets on power cycle / reset.
+
+Change ownership when idle (not **active**):
 
 ```
-mcu info
-mcu help
-mcu gpio write pg13 0      # LD3 on (active low on DISC1)
+mcu res list
+mcu res grant pwm0 pwm
+mcu res status pwm0
+```
+
+Conflict checks when using a resource:
+
+1. Request is within the pin map catalog (**scope**)
+2. Target is not **active** (held by another function)
+3. Caller matches **owner** (grant via `mcu res grant` first)
+
+## GPIO
+
+```
+mcu gpio write pg13 0      # LD3 on (active low)
 mcu gpio read pg13
 mcu gpio list
-mcu pinmap                  # peripheral signal -> pin routing
-mcu tim status              # stub (future)
-mcu adc|dac|can|uart status # stub (future)
 ```
 
-Pin names use **bank + number**: `pg13` = port G pin 13. Board aliases such as `ld3` are also accepted when listed in the pin map.
+## PWM
 
-## Pin map (single source: CSV)
+Grant ownership, set duty/frequency, then enable:
+
+```
+mcu pwm list
+mcu res grant pwm0 pwm
+mcu pwm duty pwm0 50
+mcu pwm freq tim9 1000
+mcu pwm enable pwm0 1
+mcu pwm status pwm0
+mcu pwm enable pwm0 0
+```
+
+TIM1 channels (`tim1_ch1` …) default to **foc**. Shell PWM on TIM1 is allowed
+after granting ownership away from FOC and while the motor bridge is off.
+
+Shared timers: all channels on the same TIM share one frequency (`mcu pwm freq tim9 …`).
+
+## Pin map (CSV)
 
 | Path | Role |
 |------|------|
-| `tools/pinmap/<board>.csv` | **Source of truth** — edit this |
-| `generated/pinmap/<board>.c` | Auto-generated at build time (gitignored) |
+| `tools/pinmap/<board>.csv` | Source of truth |
+| `generated/pinmap/<board>.c` | Auto-generated (gitignored) |
 
-Build runs `tools/pinmap/pinmap-gen.py` before compile. Current board: **`stm32f429i-disc1`** (`TARS_BOARD_ID` in `App/tars_platform.h` and `CMakeLists.txt`).
-
-When porting to another STM32 (F0/F3/F4, different package):
-
-1. Add `tools/pinmap/<new-board>.csv`.
-2. Set `TARS_BOARD_ID` in `CMakeLists.txt` and `App/tars_platform.h`.
-3. Rebuild — generated C appears under `generated/pinmap/`.
-
-Peripheral signal names stay the same across chips where the IP block is identical; only the `pin` column changes.
-
-See also [tools/pinmap/README.md](../tools/pinmap/README.md).
+Sections: `[periph]`, `[gpio]`, `[pwm]`.
 
 ## Lua API
 
 ```lua
 tars.gpio_write("pg13", 0)
-tars.gpio_read("pg13")
+tars.pwm_duty("pwm0", 50.0)
+tars.pwm_enable("pwm0", 1)
 ```
 
-Only pins listed in the active GPIO table can be used.
+Grant ownership from the shell before Lua uses PWM on a channel whose default
+owner is not `pwm`.

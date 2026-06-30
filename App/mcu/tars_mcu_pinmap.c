@@ -31,6 +31,60 @@ static int pinmap_stricmp(const char *a, const char *b)
   }
 }
 
+const char *TarsOwner_ToString(tars_owner_t owner)
+{
+  switch (owner)
+  {
+  case TARS_OWNER_NONE:
+    return "none";
+  case TARS_OWNER_GPIO:
+    return "gpio";
+  case TARS_OWNER_PWM:
+    return "pwm";
+  case TARS_OWNER_FOC:
+    return "foc";
+  case TARS_OWNER_SYSTEM:
+    return "system";
+  default:
+    return "?";
+  }
+}
+
+int TarsOwner_Parse(const char *text, tars_owner_t *owner_out)
+{
+  if ((text == NULL) || (owner_out == NULL))
+  {
+    return -1;
+  }
+
+  if (pinmap_stricmp(text, "none") == 0)
+  {
+    *owner_out = TARS_OWNER_NONE;
+  }
+  else if (pinmap_stricmp(text, "gpio") == 0)
+  {
+    *owner_out = TARS_OWNER_GPIO;
+  }
+  else if (pinmap_stricmp(text, "pwm") == 0)
+  {
+    *owner_out = TARS_OWNER_PWM;
+  }
+  else if (pinmap_stricmp(text, "foc") == 0)
+  {
+    *owner_out = TARS_OWNER_FOC;
+  }
+  else if (pinmap_stricmp(text, "system") == 0)
+  {
+    *owner_out = TARS_OWNER_SYSTEM;
+  }
+  else
+  {
+    return -1;
+  }
+
+  return 0;
+}
+
 static int pinmap_parse_pin_name(const char *name, char *bank_out, int *num_out)
 {
   const char *p = name;
@@ -64,30 +118,28 @@ static int pinmap_parse_pin_name(const char *name, char *bank_out, int *num_out)
   return 0;
 }
 
-static int pinmap_match_gpio_name(const tars_mcu_gpio_entry_t *entry,
-                                  const char *name,
-                                  char bank,
-                                  int pin_num)
+static int pinmap_match_name(const char *entry_name, const char *alias,
+                             const char *name, char bank, int pin_num)
 {
   char entry_bank;
   int entry_num;
 
-  if (entry == NULL || name == NULL)
+  if (name == NULL)
   {
     return 0;
   }
 
-  if ((entry->alias != NULL) && (pinmap_stricmp(entry->alias, name) == 0))
+  if ((alias != NULL) && (pinmap_stricmp(alias, name) == 0))
   {
     return 1;
   }
 
-  if ((entry->pin_name != NULL) && (pinmap_stricmp(entry->pin_name, name) == 0))
+  if ((entry_name != NULL) && (pinmap_stricmp(entry_name, name) == 0))
   {
     return 1;
   }
 
-  if (pinmap_parse_pin_name(entry->pin_name, &entry_bank, &entry_num) != 0)
+  if (pinmap_parse_pin_name(entry_name, &entry_bank, &entry_num) != 0)
   {
     return 0;
   }
@@ -116,10 +168,61 @@ int TarsMcuPinmap_ResolveGpio(const char *name, GPIO_TypeDef **port_out, uint16_
 
   for (i = 0U; i < count; i++)
   {
-    if (pinmap_match_gpio_name(&table[i], name, bank, pin_num))
+    if (pinmap_match_name(table[i].pin_name, table[i].alias, name, bank, pin_num))
     {
       *port_out = table[i].port;
       *pin_out = table[i].hal_pin;
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
+int TarsMcuPinmap_ResolvePwm(const char *name, const tars_mcu_pwm_entry_t **entry_out)
+{
+  uint32_t count = 0U;
+  const tars_mcu_pwm_entry_t *table = TarsMcuPinmap_GetPwmTable(&count);
+  uint32_t i;
+
+  if ((name == NULL) || (entry_out == NULL))
+  {
+    return -1;
+  }
+
+  for (i = 0U; i < count; i++)
+  {
+    if (pinmap_match_name(table[i].channel, table[i].alias, name, '\0', -1))
+    {
+      *entry_out = &table[i];
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
+int TarsMcuPinmap_FindCatalog(const char *id, const tars_res_catalog_entry_t **entry_out,
+                              uint32_t *index_out)
+{
+  uint32_t count = 0U;
+  const tars_res_catalog_entry_t *table = TarsMcuPinmap_GetResCatalog(&count);
+  uint32_t i;
+
+  if ((id == NULL) || (entry_out == NULL))
+  {
+    return -1;
+  }
+
+  for (i = 0U; i < count; i++)
+  {
+    if (pinmap_stricmp(table[i].id, id) == 0)
+    {
+      *entry_out = &table[i];
+      if (index_out != NULL)
+      {
+        *index_out = i;
+      }
       return 0;
     }
   }
@@ -142,21 +245,54 @@ void TarsMcuPinmap_FormatGpioList(char *out, uint32_t out_size)
 
   for (i = 0U; i < count; i++)
   {
-    char line[64];
+    char line[96];
 
     if (table[i].alias != NULL)
     {
       (void)snprintf(line,
                      sizeof(line),
-                     "  %s (%s)\r\n",
+                     "  %s (%s) owner=%s\r\n",
                      table[i].pin_name,
-                     table[i].alias);
+                     table[i].alias,
+                     TarsOwner_ToString(table[i].default_owner));
     }
     else
     {
-      (void)snprintf(line, sizeof(line), "  %s\r\n", table[i].pin_name);
+      (void)snprintf(line,
+                     sizeof(line),
+                     "  %s owner=%s\r\n",
+                     table[i].pin_name,
+                     TarsOwner_ToString(table[i].default_owner));
     }
 
+    strncat(out, line, out_size - strlen(out) - 1U);
+  }
+}
+
+void TarsMcuPinmap_FormatPwmList(char *out, uint32_t out_size)
+{
+  uint32_t count = 0U;
+  const tars_mcu_pwm_entry_t *table = TarsMcuPinmap_GetPwmTable(&count);
+  uint32_t i;
+
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  out[0] = '\0';
+
+  for (i = 0U; i < count; i++)
+  {
+    char line[112];
+
+    (void)snprintf(line,
+                   sizeof(line),
+                   "  %s -> %s pin=%s owner=%s\r\n",
+                   table[i].channel,
+                   (table[i].advanced_tim != 0U) ? "adv" : "pwm",
+                   table[i].pin_name,
+                   TarsOwner_ToString(table[i].default_owner));
     strncat(out, line, out_size - strlen(out) - 1U);
   }
 }
