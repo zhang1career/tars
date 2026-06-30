@@ -209,7 +209,7 @@ int TarsMcuPinmap_FindCatalog(const char *id, const tars_res_catalog_entry_t **e
   const tars_res_catalog_entry_t *table = TarsMcuPinmap_GetResCatalog(&count);
   uint32_t i;
 
-  if ((id == NULL) || (entry_out == NULL))
+  if (id == NULL)
   {
     return -1;
   }
@@ -218,7 +218,10 @@ int TarsMcuPinmap_FindCatalog(const char *id, const tars_res_catalog_entry_t **e
   {
     if (pinmap_stricmp(table[i].id, id) == 0)
     {
-      *entry_out = &table[i];
+      if (entry_out != NULL)
+      {
+        *entry_out = &table[i];
+      }
       if (index_out != NULL)
       {
         *index_out = i;

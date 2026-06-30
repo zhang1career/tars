@@ -13,10 +13,10 @@ uart5_rx,pd2
 # `mcu res grant` when the resource is not active.
 [pwm]
 channel,tim,chan,pin,af,default_owner,alias
-pwm0,tim9,1,pe2,AF3,none,
+pwm0,tim1,1,pa8,AF1,none,
 pwm1,tim9,2,pe4,AF3,none,
-pwm2,tim9,3,pe5,AF3,none,
-pwm3,tim9,4,pe6,AF3,none,
+pwm2,tim9,2,pe6,AF3,none,
+pwm3,tim9,1,pe2,AF3,none,
 tim1_ch1,tim1,1,pa8,AF1,foc,
 tim1_ch2,tim1,2,pa9,AF1,foc,
 tim1_ch3,tim1,3,pa10,AF1,foc,
@@ -35,3 +35,4 @@ pd4,,gpio
 pd5,,gpio
 pd7,,gpio
 pa0,b1,gpio
+pa8,,gpio

@@ -36,6 +36,11 @@
 /* USER CODE END 0 */
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim9;
+
+#define TARS_TIM9_PWM_HZ     1000U
+#define TARS_TIM9_CLK_HZ     72000000U
+#define TARS_TIM9_ARR        ((TARS_TIM9_CLK_HZ / TARS_TIM9_PWM_HZ) - 1U)
 
 /* TIM1 init function: advanced 6-PWM (CH1..3 + complementary), center-aligned,
  * dead-time, break input, TRGO=update to trigger ADC1 injected sampling. */
@@ -108,6 +113,21 @@ void MX_TIM1_Init(void)
 
 }
 
+void MX_TIM9_Init(void)
+{
+  htim9.Instance = TIM9;
+  htim9.Init.Prescaler = 0;
+  htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim9.Init.Period = TARS_TIM9_ARR;
+  htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim9.Init.RepetitionCounter = 0;
+  htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim9) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
 void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -149,6 +169,7 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
   else if (tim_pwmHandle->Instance == TIM9)
   {
     __HAL_RCC_TIM9_CLK_ENABLE();
+    __HAL_RCC_GPIOE_CLK_ENABLE();
   }
 }
 

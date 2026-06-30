@@ -9,7 +9,6 @@
 #define TARS_PWM_TIM_SLOTS   4U
 #define TARS_PWM_CH_SLOTS    16U
 #define TARS_PWM_DEFAULT_HZ  1000U
-#define TARS_PWM_TIM_CLK_HZ  72000000U
 
 typedef struct {
   TIM_TypeDef *instance;
@@ -21,7 +20,7 @@ typedef struct {
 
 typedef struct {
   const tars_mcu_pwm_entry_t *map;
-  float duty_pct;
+  uint8_t duty_pct;
   uint8_t running;
   int8_t tim_slot;
 } tars_pwm_ch_t;
@@ -55,6 +54,110 @@ static void pwm_enable_tim_clock(TIM_TypeDef *tim)
   else if (tim == TIM12) { __HAL_RCC_TIM12_CLK_ENABLE(); }
   else if (tim == TIM13) { __HAL_RCC_TIM13_CLK_ENABLE(); }
   else if (tim == TIM14) { __HAL_RCC_TIM14_CLK_ENABLE(); }
+}
+
+static uint32_t pwm_tim_clk_hz(TIM_TypeDef *tim)
+{
+  uint32_t pclk;
+  uint32_t ppre;
+
+  if ((tim == TIM1) || (tim == TIM9))
+  {
+    return 72000000U;
+  }
+
+  if ((tim == TIM8) || (tim == TIM10) ||
+      (tim == TIM11))
+  {
+    pclk = HAL_RCC_GetPCLK2Freq();
+    ppre = (RCC->CFGR & RCC_CFGR_PPRE2) >> RCC_CFGR_PPRE2_Pos;
+  }
+  else
+  {
+    pclk = HAL_RCC_GetPCLK1Freq();
+    ppre = (RCC->CFGR & RCC_CFGR_PPRE1) >> RCC_CFGR_PPRE1_Pos;
+  }
+
+  if (ppre != 0U)
+  {
+    pclk *= 2U;
+  }
+
+  /* Sanity: on this board SYSCLK is 72 MHz and TIM9 sits on APB2. */
+  if (pclk < 32000000U)
+  {
+    pclk = 72000000U;
+  }
+
+  return pclk;
+}
+
+static int pwm_pin_index(uint16_t hal_pin)
+{
+  uint32_t i;
+
+  for (i = 0U; i < 16U; i++)
+  {
+    if (hal_pin == (uint16_t)(1U << i))
+    {
+      return (int)i;
+    }
+  }
+
+  return -1;
+}
+
+static void pwm_force_update(TIM_HandleTypeDef *htim)
+{
+  if (htim != NULL)
+  {
+    htim->Instance->EGR = TIM_EGR_UG;
+  }
+}
+
+static void pwm_disable_oc_preload(TIM_TypeDef *tim, uint32_t channel)
+{
+  if (tim == NULL)
+  {
+    return;
+  }
+
+  if (channel == TIM_CHANNEL_1)
+  {
+    tim->CCMR1 &= ~TIM_CCMR1_OC1PE;
+  }
+  else if (channel == TIM_CHANNEL_2)
+  {
+    tim->CCMR1 &= ~TIM_CCMR1_OC2PE;
+  }
+  else if (channel == TIM_CHANNEL_3)
+  {
+    tim->CCMR2 &= ~TIM_CCMR2_OC3PE;
+  }
+  else if (channel == TIM_CHANNEL_4)
+  {
+    tim->CCMR2 &= ~TIM_CCMR2_OC4PE;
+  }
+}
+
+static uint32_t pwm_pulse_from_duty(TIM_HandleTypeDef *htim, uint8_t duty_pct)
+{
+  uint32_t arr = __HAL_TIM_GET_AUTORELOAD(htim);
+  uint32_t pulse = (((arr + 1U) * (uint32_t)duty_pct) / 100U);
+
+  if (pulse > arr)
+  {
+    pulse = arr;
+  }
+
+  return pulse;
+}
+
+static void pwm_apply_compare(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t pulse)
+{
+  __HAL_TIM_SET_COMPARE(htim, channel, pulse);
+  pwm_disable_oc_preload(htim->Instance, channel);
+  pwm_force_update(htim);
 }
 
 static int pwm_find_tim_slot(TIM_TypeDef *tim, int create)
@@ -114,7 +217,7 @@ static int pwm_find_ch_slot(const char *channel, int create)
 
   i = s_ch_count++;
   s_ch_pool[i].map = NULL;
-  s_ch_pool[i].duty_pct = 0.0f;
+  s_ch_pool[i].duty_pct = 0U;
   s_ch_pool[i].running = 0U;
   s_ch_pool[i].tim_slot = -1;
   return (int)i;
@@ -125,6 +228,11 @@ static TIM_HandleTypeDef *pwm_tim_handle(const tars_mcu_pwm_entry_t *map)
   if (map->tim == TIM1)
   {
     return &htim1;
+  }
+
+  if (map->tim == TIM9)
+  {
+    return &htim9;
   }
 
   {
@@ -140,14 +248,24 @@ static TIM_HandleTypeDef *pwm_tim_handle(const tars_mcu_pwm_entry_t *map)
 static int pwm_apply_tim_timing(TIM_HandleTypeDef *htim, uint32_t freq_hz)
 {
   uint32_t arr;
+  uint32_t clk_hz;
 
   if ((htim == NULL) || (freq_hz == 0U))
   {
     return -1;
   }
 
+  clk_hz = pwm_tim_clk_hz(htim->Instance);
+
+  /* TIM1 is owned by FOC init (center-aligned ~20 kHz). Shell PWM only
+   * adjusts compare; do not rewrite ARR/prescaler. */
+  if (htim->Instance == TIM1)
+  {
+    return 0;
+  }
+
   /* Edge-aligned: F = CLK / ((PSC+1)*(ARR+1)). Hold PSC=0 for simplicity. */
-  arr = (TARS_PWM_TIM_CLK_HZ / freq_hz);
+  arr = (clk_hz / freq_hz);
   if (arr == 0U)
   {
     arr = 1U;
@@ -156,22 +274,41 @@ static int pwm_apply_tim_timing(TIM_HandleTypeDef *htim, uint32_t freq_hz)
 
   __HAL_TIM_SET_PRESCALER(htim, 0U);
   __HAL_TIM_SET_AUTORELOAD(htim, arr);
+  pwm_force_update(htim);
   return 0;
 }
 
 static int pwm_init_tim_instance(const tars_mcu_pwm_entry_t *map, uint32_t freq_hz)
 {
   int slot;
-  tars_pwm_tim_t *rt;
   TIM_HandleTypeDef *htim;
 
   if (map->tim == TIM1)
   {
     htim = &htim1;
     slot = pwm_find_tim_slot(TIM1, 1);
+    if (slot >= 0)
+    {
+      s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+    }
+    return 0;
+  }
+  else if (map->tim == TIM9)
+  {
+    htim = &htim9;
+    slot = pwm_find_tim_slot(TIM9, 1);
+    if (slot < 0)
+    {
+      return -1;
+    }
+    s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+    (void)pwm_apply_tim_timing(htim, freq_hz);
+    return 0;
   }
   else
   {
+    tars_pwm_tim_t *rt;
+
     slot = pwm_find_tim_slot(map->tim, 1);
     if (slot < 0)
     {
@@ -188,21 +325,11 @@ static int pwm_init_tim_instance(const tars_mcu_pwm_entry_t *map, uint32_t freq_
     htim->Init.Period = 1000U;
     htim->Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim->Init.RepetitionCounter = 0U;
-    htim->Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+    htim->Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 
-    if (map->advanced_tim != 0U)
+    if (HAL_TIM_PWM_Init(htim) != HAL_OK)
     {
-      if (HAL_TIM_PWM_Init(htim) != HAL_OK)
-      {
-        return -1;
-      }
-    }
-    else
-    {
-      if (HAL_TIM_PWM_Init(htim) != HAL_OK)
-      {
-        return -1;
-      }
+      return -1;
     }
 
     rt->freq_hz = freq_hz;
@@ -225,18 +352,19 @@ static int pwm_config_pin_af(const tars_mcu_pwm_entry_t *map)
   gpio.Pin = map->hal_pin;
   gpio.Mode = GPIO_MODE_AF_PP;
   gpio.Pull = GPIO_NOPULL;
-  gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   gpio.Alternate = map->gpio_af;
   HAL_GPIO_Init(map->port, &gpio);
   return 0;
 }
 
-static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, float duty_pct)
+static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_pct)
 {
   TIM_HandleTypeDef *htim = pwm_tim_handle(map);
   TIM_OC_InitTypeDef oc = {0};
   uint32_t pulse;
   uint32_t arr;
+  int slot;
 
   if (htim == NULL)
   {
@@ -252,13 +380,14 @@ static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, float duty_pct
     return -1;
   }
 
-  if (map->tim != TIM1)
+  slot = pwm_find_tim_slot(map->tim, 0);
+  if (slot >= 0)
   {
-    (void)pwm_config_pin_af(map);
+    (void)pwm_apply_tim_timing(htim, s_tim_pool[(uint32_t)slot].freq_hz);
   }
 
   arr = __HAL_TIM_GET_AUTORELOAD(htim);
-  pulse = (uint32_t)((duty_pct / 100.0f) * (float)(arr + 1U));
+  pulse = (((arr + 1U) * (uint32_t)duty_pct) / 100U);
   if (pulse > arr)
   {
     pulse = arr;
@@ -273,6 +402,10 @@ static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, float duty_pct
   {
     return -1;
   }
+
+  pwm_disable_oc_preload(htim->Instance, map->hal_channel);
+  pwm_apply_compare(htim, map->hal_channel, pulse);
+  (void)pwm_config_pin_af(map);
 
   return 0;
 }
@@ -325,6 +458,19 @@ int TarsResPwm_Enable(const char *channel, int enable)
 
   ch = &s_ch_pool[(uint32_t)ch_slot];
 
+  if (enable != 0)
+  {
+    if (ch->running != 0U)
+    {
+      htim = pwm_tim_handle(map);
+      if (htim != NULL)
+      {
+        pwm_apply_compare(htim, map->hal_channel, pwm_pulse_from_duty(htim, ch->duty_pct));
+      }
+      return 0;
+    }
+  }
+
   if (enable == 0)
   {
     if (ch->running != 0U)
@@ -364,6 +510,7 @@ int TarsResPwm_Enable(const char *channel, int enable)
   }
 
   ch->map = map;
+
   if (pwm_configure_channel(map, ch->duty_pct) != 0)
   {
     (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
@@ -377,16 +524,26 @@ int TarsResPwm_Enable(const char *channel, int enable)
     return TARS_RES_ERR_PARAM;
   }
 
-  if (HAL_TIM_PWM_Start(htim, map->hal_channel) != HAL_OK)
   {
-    (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
-    return TARS_RES_ERR_PARAM;
+    HAL_StatusTypeDef hal_st = HAL_TIM_PWM_Start(htim, map->hal_channel);
+
+    if (hal_st != HAL_OK)
+    {
+      /* FOC init already starts TIM1 PWM channels (MOE off). Shell reuse is OK. */
+      if ((map->tim != TIM1) || ((htim->Instance->CR1 & TIM_CR1_CEN) == 0U))
+      {
+        (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
+        return TARS_RES_ERR_PARAM;
+      }
+    }
   }
 
   if (map->advanced_tim != 0U)
   {
     __HAL_TIM_MOE_ENABLE(htim);
   }
+
+  pwm_apply_compare(htim, map->hal_channel, pwm_pulse_from_duty(htim, ch->duty_pct));
 
   {
     int tslot = pwm_find_tim_slot(map->tim, 0);
@@ -407,8 +564,7 @@ int TarsResPwm_SetDuty(const char *channel, float duty_pct)
   int ch_slot;
   tars_pwm_ch_t *ch;
   TIM_HandleTypeDef *htim;
-  uint32_t arr;
-  uint32_t pulse;
+  uint8_t duty;
 
   if (TarsMcuPinmap_ResolvePwm(channel, &map) != 0)
   {
@@ -424,6 +580,8 @@ int TarsResPwm_SetDuty(const char *channel, float duty_pct)
     duty_pct = 100.0f;
   }
 
+  duty = (uint8_t)duty_pct;
+
   ch_slot = pwm_find_ch_slot(channel, 1);
   if (ch_slot < 0)
   {
@@ -432,7 +590,7 @@ int TarsResPwm_SetDuty(const char *channel, float duty_pct)
 
   ch = &s_ch_pool[(uint32_t)ch_slot];
   ch->map = map;
-  ch->duty_pct = duty_pct;
+  ch->duty_pct = duty;
 
   if (ch->running == 0U)
   {
@@ -445,14 +603,7 @@ int TarsResPwm_SetDuty(const char *channel, float duty_pct)
     return TARS_RES_ERR_PARAM;
   }
 
-  arr = __HAL_TIM_GET_AUTORELOAD(htim);
-  pulse = (uint32_t)((duty_pct / 100.0f) * (float)(arr + 1U));
-  if (pulse > arr)
-  {
-    pulse = arr;
-  }
-
-  __HAL_TIM_SET_COMPARE(htim, map->hal_channel, pulse);
+  pwm_apply_compare(htim, map->hal_channel, pwm_pulse_from_duty(htim, duty));
   return 0;
 }
 
@@ -490,16 +641,56 @@ int TarsResPwm_SetFreq(const char *tim_id, uint32_t freq_hz)
       return TARS_RES_ERR_ACTIVE;
     }
     htim = &htim1;
+    (void)pwm_find_tim_slot(TIM1, 1);
+    return 0;
+  }
+  else if (tim == TIM9)
+  {
+    int slot = pwm_find_tim_slot(TIM9, 1);
+
+    if (slot < 0)
+    {
+      return TARS_RES_ERR_SCOPE;
+    }
+
+    htim = &htim9;
+    s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
   }
   else
   {
-    int slot = pwm_find_tim_slot(tim, 0);
+    int slot = pwm_find_tim_slot(tim, 1);
     if (slot < 0)
     {
       return TARS_RES_ERR_SCOPE;
     }
     htim = &s_tim_pool[(uint32_t)slot].handle;
     s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+
+    if (s_tim_pool[(uint32_t)slot].handle.Instance == NULL)
+    {
+      s_tim_pool[(uint32_t)slot].handle.Instance = tim;
+      pwm_enable_tim_clock(tim);
+      s_tim_pool[(uint32_t)slot].handle.Init.Prescaler = 0U;
+      s_tim_pool[(uint32_t)slot].handle.Init.CounterMode = TIM_COUNTERMODE_UP;
+      s_tim_pool[(uint32_t)slot].handle.Init.Period = 1000U;
+      s_tim_pool[(uint32_t)slot].handle.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+      s_tim_pool[(uint32_t)slot].handle.Init.RepetitionCounter = 0U;
+      s_tim_pool[(uint32_t)slot].handle.Init.AutoReloadPreload =
+          TIM_AUTORELOAD_PRELOAD_DISABLE;
+      if (HAL_TIM_PWM_Init(&s_tim_pool[(uint32_t)slot].handle) != HAL_OK)
+      {
+        return TARS_RES_ERR_PARAM;
+      }
+    }
+  }
+
+  if (tim != TIM1)
+  {
+    int slot = pwm_find_tim_slot(tim, 0);
+    if (slot >= 0)
+    {
+      s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+    }
   }
 
   if (pwm_apply_tim_timing(htim, freq_hz) != 0)
@@ -537,18 +728,77 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
     return TARS_RES_ERR_SCOPE;
   }
 
+  int written;
+  int pin_idx;
+  uint32_t moder = 0U;
+  uint32_t afr = 0U;
+  TIM_TypeDef *tim = map->tim;
+
   ch_slot = pwm_find_ch_slot(channel, 0);
   ch = (ch_slot >= 0) ? &s_ch_pool[(uint32_t)ch_slot] : NULL;
 
-  (void)snprintf(out,
-                 out_size,
-                 "pwm: ch=%s pin=%s tim=%s owner=%s active=%s run=%u duty=%.1f%%\r\n",
-                 map->channel,
-                 map->pin_name,
-                 map->tim_id ? map->tim_id : "?",
-                 TarsOwner_ToString(TarsResMgr_GetOwner(channel)),
-                 TarsOwner_ToString(TarsResMgr_GetActive(channel)),
-                 (unsigned)((ch != NULL) ? ch->running : 0U),
-                 (double)((ch != NULL) ? ch->duty_pct : 0.0));
+  written = snprintf(out,
+                     out_size,
+                     "pwm: ch=%s pin=%s tim=%s owner=%s active=%s run=%u duty=%u%%\r\n",
+                     map->channel,
+                     map->pin_name,
+                     map->tim_id ? map->tim_id : "?",
+                     TarsOwner_ToString(TarsResMgr_GetOwner(channel)),
+                     TarsOwner_ToString(TarsResMgr_GetActive(channel)),
+                     (unsigned)((ch != NULL) ? ch->running : 0U),
+                     (unsigned)((ch != NULL) ? ch->duty_pct : 0U));
+  if ((written < 0) || ((uint32_t)written >= out_size))
+  {
+    return 0;
+  }
+
+  pin_idx = pwm_pin_index(map->hal_pin);
+  if (pin_idx >= 0)
+  {
+    moder = (map->port->MODER >> ((uint32_t)pin_idx * 2U)) & 3U;
+    if (pin_idx < 8)
+    {
+      afr = (map->port->AFR[0] >> ((uint32_t)pin_idx * 4U)) & 0xFU;
+    }
+    else
+    {
+      afr = (map->port->AFR[1] >> ((uint32_t)(pin_idx - 8) * 4U)) & 0xFU;
+    }
+  }
+
+  if (map->advanced_tim != 0U)
+  {
+    (void)snprintf(out + (uint32_t)written,
+                   out_size - (uint32_t)written,
+                   "  hw: tim_cr1=0x%08lx cen=%lu ccen=0x%04lx ccmr1=0x%08lx ccr1=%lu ccr2=%lu arr=%lu cnt=%lu pin_moder=%lu pin_afr=%lu moe=%lu bdtr=0x%04lx\r\n",
+                   (unsigned long)tim->CR1,
+                   (unsigned long)((tim->CR1 & TIM_CR1_CEN) != 0U ? 1U : 0U),
+                   (unsigned long)(tim->CCER & 0xFFFFU),
+                   (unsigned long)tim->CCMR1,
+                   (unsigned long)tim->CCR1,
+                   (unsigned long)tim->CCR2,
+                   (unsigned long)tim->ARR,
+                   (unsigned long)tim->CNT,
+                   (unsigned long)moder,
+                   (unsigned long)afr,
+                   (unsigned long)((tim->BDTR & TIM_BDTR_MOE) != 0U ? 1U : 0U),
+                   (unsigned long)(tim->BDTR & 0xFFFFU));
+  }
+  else
+  {
+    (void)snprintf(out + (uint32_t)written,
+                   out_size - (uint32_t)written,
+                   "  hw: tim_cr1=0x%08lx cen=%lu ccen=0x%04lx ccmr1=0x%08lx ccr1=%lu ccr2=%lu arr=%lu cnt=%lu pin_moder=%lu pin_afr=%lu\r\n",
+                   (unsigned long)tim->CR1,
+                   (unsigned long)((tim->CR1 & TIM_CR1_CEN) != 0U ? 1U : 0U),
+                   (unsigned long)(tim->CCER & 0xFFFFU),
+                   (unsigned long)tim->CCMR1,
+                   (unsigned long)tim->CCR1,
+                   (unsigned long)tim->CCR2,
+                   (unsigned long)tim->ARR,
+                   (unsigned long)tim->CNT,
+                   (unsigned long)moder,
+                   (unsigned long)afr);
+  }
   return 0;
 }

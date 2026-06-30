@@ -218,24 +218,27 @@ int TarsResMgr_Grant(const char *id, tars_owner_t new_owner)
     {
       uint32_t pin_idx = 0U;
 
-      if (res_find_gpio_index_by_pin(pwm->pin_name, &pin_idx) == 0)
+      if (res_find_gpio_index_by_pin(pwm->pin_name, &pin_idx) != 0)
       {
-        if ((s_slots[pin_idx].active == TARS_OWNER_NONE) &&
-            (s_slots[pin_idx].owner != TARS_OWNER_SYSTEM))
+        if (TarsMcuPinmap_FindCatalog(pwm->pin_name, NULL, &pin_idx) != 0)
         {
-          if ((s_slots[pin_idx].owner == TARS_OWNER_NONE) ||
-              (s_slots[pin_idx].owner == new_owner))
-          {
-            s_slots[pin_idx].owner = new_owner;
-          }
-          else
-          {
-            st = TARS_RES_ERR_OWNER;
-          }
+          st = TARS_RES_ERR_SCOPE;
+        }
+      }
+
+      if (st == 0)
+      {
+        if (s_slots[pin_idx].owner == TARS_OWNER_SYSTEM)
+        {
+          st = TARS_RES_ERR_SYSTEM;
         }
         else if (s_slots[pin_idx].active != TARS_OWNER_NONE)
         {
           st = TARS_RES_ERR_ACTIVE;
+        }
+        else
+        {
+          s_slots[pin_idx].owner = new_owner;
         }
       }
     }
@@ -355,7 +358,7 @@ int TarsResMgr_AcquirePwm(const char *channel, tars_owner_t owner)
     return TARS_RES_ERR_SCOPE;
   }
 
-  if (res_find_gpio_index_by_pin(pwm->pin_name, &pin_idx) != 0)
+  if (TarsMcuPinmap_FindCatalog(pwm->pin_name, NULL, &pin_idx) != 0)
   {
     return TARS_RES_ERR_SCOPE;
   }
@@ -363,6 +366,14 @@ int TarsResMgr_AcquirePwm(const char *channel, tars_owner_t owner)
   if (osMutexWait(s_mutex, 100U) != osOK)
   {
     return TARS_RES_ERR_PARAM;
+  }
+
+  /* Overlap: channel already granted to pwm may claim the backing pin when idle. */
+  if ((s_slots[pwm_idx].owner == owner) &&
+      (s_slots[pin_idx].active == TARS_OWNER_NONE) &&
+      (s_slots[pin_idx].owner != TARS_OWNER_SYSTEM))
+  {
+    s_slots[pin_idx].owner = owner;
   }
 
   st = res_acquire_pair_sorted(pin_idx, pwm_idx, owner);
@@ -392,7 +403,7 @@ int TarsResMgr_ReleasePwm(const char *channel, tars_owner_t owner)
     return TARS_RES_ERR_SCOPE;
   }
 
-  if (res_find_gpio_index_by_pin(pwm->pin_name, &pin_idx) != 0)
+  if (TarsMcuPinmap_FindCatalog(pwm->pin_name, NULL, &pin_idx) != 0)
   {
     return TARS_RES_ERR_SCOPE;
   }

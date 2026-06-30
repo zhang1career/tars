@@ -169,7 +169,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
     char ch[24];
     char tim_id[16];
     unsigned long val = 0UL;
-    float duty = 0.0f;
+    unsigned long duty_ul = 0UL;
 
     if (mcu_str_eq(rest, "list"))
     {
@@ -228,14 +228,35 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
     if (strncmp(rest, "duty ", 5) == 0)
     {
-      if (sscanf(rest + 5, "%23s %f", ch, &duty) != 2)
+      const char *args = rest + 5;
+      char *endptr = NULL;
+
+      if (sscanf(args, "%23s", ch) != 1)
       {
         (void)snprintf(out, out_size, "mcu pwm duty: use duty <ch> <0-100>\r\n");
         return 1;
       }
 
+      args += strlen(ch);
+      while ((*args == ' ') || (*args == '\t'))
       {
-        int st = TarsMcu_PwmSetDuty(ch, duty);
+        args++;
+      }
+
+      duty_ul = strtoul(args, &endptr, 0);
+      if ((endptr == args) || (*endptr != '\0'))
+      {
+        (void)snprintf(out, out_size, "mcu pwm duty: use duty <ch> <0-100>\r\n");
+        return 1;
+      }
+
+      if (duty_ul > 100UL)
+      {
+        duty_ul = 100UL;
+      }
+
+      {
+        int st = TarsMcu_PwmSetDuty(ch, (float)duty_ul);
 
         if (st != 0)
         {
@@ -249,9 +270,9 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
         {
           (void)snprintf(out,
                          out_size,
-                         "mcu pwm duty: ch=%s duty=%.1f\r\n",
+                         "mcu pwm duty: ch=%s duty=%lu\r\n",
                          ch,
-                         (double)duty);
+                         duty_ul);
         }
       }
       return 1;
