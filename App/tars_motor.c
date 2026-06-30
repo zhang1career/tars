@@ -1,78 +1,56 @@
 #include "tars_motor.h"
-#include "tim.h"
-#include <math.h>
+#include "tars_foc.h"
+#include <stddef.h>
 
-#define TARS_MOTOR_KP           0.15f
-#define TARS_MOTOR_MAX_VEL      120.0f
-#define TARS_MOTOR_DT_S         0.1f
+/*
+ * Compatibility facade. The demo position loop has been replaced by the
+ * firmware-resident FOC driver (App/foc/tars_foc.c), which wraps the
+ * Simulink-generated controller. This shim keeps the legacy
+ * tars_motor_snapshot_t API stable for existing consumers (LCD viewport,
+ * tars_hal, probe motor_* metrics); richer FOC telemetry (id/iq/theta/vdc)
+ * is exposed directly via TarsFoc_GetSnapshot().
+ */
 
-static tars_motor_snapshot_t s_motor;
-static float s_demo_phase;
+#define TARS_RAD_TO_DEG   57.2957795f
 
 void TarsMotor_Init(void)
 {
-  s_motor.position_deg = 0.0f;
-  s_motor.velocity_rpm = 0.0f;
-  s_motor.target_deg = 0.0f;
-  s_motor.pwm_duty = 0.0f;
-  s_motor.error_deg = 0.0f;
-  s_motor.loop_count = 0U;
-  s_motor.state = TARS_MOTOR_STATE_IDLE;
-  s_motor.fault_code = 0U;
-  s_demo_phase = 0.0f;
-
-  (void)HAL_TIM_Base_Start(&htim1);
+  TarsFoc_Init();
 }
 
 void TarsMotor_Step(void)
 {
-  float error;
-  float pwm;
-  float accel;
-
-  s_demo_phase += TARS_MOTOR_DT_S;
-  s_motor.target_deg = 45.0f * sinf(s_demo_phase * 0.5f);
-
-  error = s_motor.target_deg - s_motor.position_deg;
-  s_motor.error_deg = error;
-
-  pwm = TARS_MOTOR_KP * error;
-  if (pwm > 1.0f)
-  {
-    pwm = 1.0f;
-  }
-  else if (pwm < -1.0f)
-  {
-    pwm = -1.0f;
-  }
-
-  s_motor.pwm_duty = pwm;
-  accel = pwm * TARS_MOTOR_MAX_VEL;
-
-  s_motor.velocity_rpm += accel * TARS_MOTOR_DT_S;
-  if (s_motor.velocity_rpm > TARS_MOTOR_MAX_VEL)
-  {
-    s_motor.velocity_rpm = TARS_MOTOR_MAX_VEL;
-  }
-  else if (s_motor.velocity_rpm < -TARS_MOTOR_MAX_VEL)
-  {
-    s_motor.velocity_rpm = -TARS_MOTOR_MAX_VEL;
-  }
-
-  s_motor.position_deg += (s_motor.velocity_rpm / 60.0f) * 360.0f * TARS_MOTOR_DT_S;
-  s_motor.velocity_rpm *= 0.92f;
-
-  s_motor.loop_count++;
-  s_motor.state = TARS_MOTOR_STATE_RUN;
-  s_motor.fault_code = 0U;
+  TarsFoc_Step();
 }
 
 void TarsMotor_GetSnapshot(tars_motor_snapshot_t *out)
 {
+  tars_foc_snapshot_t foc;
+  float theta_deg;
+
   if (out == NULL)
   {
     return;
   }
 
-  *out = s_motor;
+  TarsFoc_GetSnapshot(&foc);
+
+  theta_deg = foc.theta_est_rad * TARS_RAD_TO_DEG;
+  while (theta_deg >= 360.0f)
+  {
+    theta_deg -= 360.0f;
+  }
+  while (theta_deg < 0.0f)
+  {
+    theta_deg += 360.0f;
+  }
+
+  out->position_deg = theta_deg;                         /* electrical angle  */
+  out->velocity_rpm = foc.speed_est_rpm;
+  out->target_deg   = foc.speed_ref_rpm;                 /* speed command     */
+  out->pwm_duty     = foc.duty_a;
+  out->error_deg    = foc.speed_ref_rpm - foc.speed_est_rpm;
+  out->loop_count   = foc.loop_count;
+  out->state        = foc.state;                         /* enum values align */
+  out->fault_code   = foc.fault_code;
 }

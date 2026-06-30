@@ -64,7 +64,9 @@ extern LTDC_HandleTypeDef hltdc;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
-extern DMA_HandleTypeDef hdma_usart1_tx;
+extern UART_HandleTypeDef huart5;
+extern DMA_HandleTypeDef hdma_uart5_tx;
+extern ADC_HandleTypeDef hadc1;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -231,19 +233,27 @@ void DMA2D_IRQHandler(void)
 /* USER CODE BEGIN 1 */
 
 /**
-  * @brief This function handles USART1 global interrupt (probe SCPI RX/TX).
+  * @brief This function handles UART5 global interrupt (probe SCPI RX/TX).
   */
-void USART1_IRQHandler(void)
+void UART5_IRQHandler(void)
 {
-  HAL_UART_IRQHandler(&huart1);
+  HAL_UART_IRQHandler(&huart5);
 }
 
 /**
-  * @brief This function handles DMA2 Stream7 global interrupt (USART1 TX DMA).
+  * @brief This function handles DMA1 Stream7 global interrupt (UART5 TX DMA).
   */
-void DMA2_Stream7_IRQHandler(void)
+void DMA1_Stream7_IRQHandler(void)
 {
-  HAL_DMA_IRQHandler(&hdma_usart1_tx);
+  HAL_DMA_IRQHandler(&hdma_uart5_tx);
+}
+
+/**
+  * @brief This function handles ADC global interrupt (FOC injected JEOC).
+  */
+void ADC_IRQHandler(void)
+{
+  HAL_ADC_IRQHandler(&hadc1);
 }
 
 /* USER CODE END 1 */

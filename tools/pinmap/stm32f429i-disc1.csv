@@ -1,22 +1,53 @@
 @board,stm32f429i-disc1
 @mcu,stm32f429
-@package,lqfp176
+@package,lqfp144
 
 # Peripheral signal routing (signal names are MCU-generic).
+# Only signals that are actually routed in the CubeMX project belong here.
 [periph]
 signal,pin
-tim1_ch1,pa8
-tim1_ch2,pa9
-tim1_ch3,pa10
-tim1_ch4,pa11
-usart1_tx,pa9
-usart1_rx,pa10
+uart5_tx,pc12
+uart5_rx,pd2
 i2c1_scl,pb6
 i2c1_sda,pb9
+# usart1 (pa9/pa10) is still initialized by CubeMX but unused; the probe moved
+# to UART5 (pc12/pd2). pa9/pa10 are reserved for TIM1_CH2/CH3 in the FOC stage.
+
+# --- Planned FOC occupancy (Plan B; not yet routed by MX_TIM1/ADC1 init) ------
+# Stage 2 freed the LCD pins (LTDC/I2C3/SPI5 init gated off via TARS_FEATURE_LCD),
+# so TIM1's 6-channel complementary PWM + ADC1 injected sensing now fit. Promote
+# these into [periph] above when stage 3 (hand-authored MX_TIM1/ADC1) lands.
+#
+# TIM1 advanced PWM (AF1), 20 kHz center-aligned, 6-PWM + dead-time + break:
+#   tim1_ch1 , pa8      ; phase A high-side   (freed from I2C3_SCL)
+#   tim1_ch1n, pa7      ; phase A low-side    (freed from ACP_RST gpio)
+#   tim1_ch2 , pa9      ; phase B high-side   (freed from USART1_TX / probe)
+#   tim1_ch2n, pb0      ; phase B low-side    (freed from LTDC_R3)
+#   tim1_ch3 , pa10     ; phase C high-side   (freed from USART1_RX / probe)
+#   tim1_ch3n, pb1      ; phase C low-side    (freed from LTDC_R6)
+#   tim1_bkin, pa6      ; break / nFAULT in   (freed from LTDC_G2)
+# Three-shunt phase-current + DC-bus sensing on ADC1 injected group:
+#   adc1_in_ia , pc1    ; ADC1_IN11  phase A shunt amp  (freed from gyro CS)
+#   adc1_in_ib , pc3    ; ADC1_IN13  phase B shunt amp  (free)
+#   adc1_in_ic , pc4    ; ADC1_IN14  phase C shunt amp  (freed from OTG_FS_PSO)
+#   adc1_in_vdc, pc5    ; ADC1_IN15  DC-bus divider     (freed from OTG_FS_OC)
+#   drv_en     , pe2    ; gate-driver enable (gpio out, free)
+# B1 button stays on pa0. Gate driver must be 6-PWM (MCU generates dead-time).
 
 # GPIO pins exposed to shell/API (pin name + optional board alias).
+# User-controllable outputs: Morpho/CN5 expansion + on-board LEDs. Not wired to
+# FMC/LTDC/USB/FOC on the motor-control build (TARS_FEATURE_LCD=0).
+# pa0/b1 is input-only (user button); readable but writes are rejected in firmware.
 [gpio]
 pin,alias
 pg13,ld3
 pg14,ld4
+pe2,drv_en
+pe3,
+pe4,
+pe5,
+pe6,
+pd4,
+pd5,
+pd7,
 pa0,b1

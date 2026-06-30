@@ -21,6 +21,64 @@ typedef struct {
 static tars_button_t s_buttons[TARS_RES_GPIO_MAX_BUTTONS];
 static uint32_t s_button_count;
 
+static void gpio_enable_port_clock(GPIO_TypeDef *port)
+{
+  if (port == GPIOA)
+  {
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+  }
+  else if (port == GPIOB)
+  {
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+  }
+  else if (port == GPIOC)
+  {
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+  }
+  else if (port == GPIOD)
+  {
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+  }
+  else if (port == GPIOE)
+  {
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+  }
+  else if (port == GPIOF)
+  {
+    __HAL_RCC_GPIOF_CLK_ENABLE();
+  }
+  else if (port == GPIOG)
+  {
+    __HAL_RCC_GPIOG_CLK_ENABLE();
+  }
+  else if (port == GPIOH)
+  {
+    __HAL_RCC_GPIOH_CLK_ENABLE();
+  }
+  else if (port == GPIOI)
+  {
+    __HAL_RCC_GPIOI_CLK_ENABLE();
+  }
+}
+
+static int gpio_is_input_only(GPIO_TypeDef *port, uint16_t pin)
+{
+  /* B1 user button on PA0 — keep as debounced input. */
+  return (port == GPIOA && pin == GPIO_PIN_0) ? 1 : 0;
+}
+
+static void gpio_ensure_output(GPIO_TypeDef *port, uint16_t pin)
+{
+  GPIO_InitTypeDef gpio = {0};
+
+  gpio_enable_port_clock(port);
+  gpio.Pin = pin;
+  gpio.Mode = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(port, &gpio);
+}
+
 /* GPIO writes use BSRR (atomic per pin), so output access needs no lock.
  * The button registry is mutated only by the resource task; consumers read a
  * single byte (stable_pressed), which is atomic on Cortex-M. */
@@ -35,6 +93,12 @@ int TarsResGpio_Write(const char *pin_name, int value)
     return -1;
   }
 
+  if (gpio_is_input_only(port, pin) != 0)
+  {
+    return -2;
+  }
+
+  gpio_ensure_output(port, pin);
   HAL_GPIO_WritePin(port, pin, (value != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
   return 0;
 }

@@ -15,4 +15,9 @@ task_count,count,TASK_COUNT,0
 motor_pos,deg,MOTOR_POS,0
 motor_vel,rpm,MOTOR_VEL,0
 motor_loops,count,MOTOR_LOOPS,0
+foc_id,A,FOC_ID,0
+foc_iq,A,FOC_IQ,0
+foc_theta,deg,FOC_THETA,0
+foc_speed,rpm,FOC_SPEED,0
+foc_vdc,V,FOC_VDC,0
 b1_state,bool,BUTTON,0

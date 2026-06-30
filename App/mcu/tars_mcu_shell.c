@@ -26,7 +26,7 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  "  mcu info\r\n"
                  "  mcu gpio write <pgNN|alias> <0|1>\r\n"
                  "  mcu gpio read <pgNN|alias>\r\n"
-                 "  mcu gpio list\r\n"
+                 "  mcu gpio list              (user GPIO on Morpho + LD3/LD4)\r\n"
                  "  mcu pinmap\r\n"
                  "  mcu tim|adc|dac|can|uart status  (stub)\r\n");
 }
@@ -111,17 +111,28 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
         return 1;
       }
 
-      if (TarsMcu_GpioWrite(pin_name, (int)val) != 0)
       {
-        (void)snprintf(out, out_size, "mcu gpio write: unknown pin %s\r\n", pin_name);
-      }
-      else
-      {
-        (void)snprintf(out,
-                       out_size,
-                       "mcu gpio write: pin=%s val=%lu\r\n",
-                       pin_name,
-                       val);
+        int wr = TarsMcu_GpioWrite(pin_name, (int)val);
+
+        if (wr == -2)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu gpio write: pin %s is input-only\r\n",
+                         pin_name);
+        }
+        else if (wr != 0)
+        {
+          (void)snprintf(out, out_size, "mcu gpio write: unknown pin %s\r\n", pin_name);
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu gpio write: pin=%s val=%lu\r\n",
+                         pin_name,
+                         val);
+        }
       }
       return 1;
     }

@@ -5,6 +5,7 @@
 #include "tars_hal.h"
 #include "tars_sys.h"
 #include "tars_mcu.h"
+#include "tars_foc.h"
 #include "usb_device.h"
 #include "usbd_cdc.h"
 #include "tars_app.h"
@@ -283,8 +284,8 @@ static void shell_execute_line(void)
       "  status            Show USB role and link state\r\n"
       "  echo              Echo arguments\r\n"
       "  mcu               MCU info (try mcu help)\r\n"
-      "  mcu gpio write pg13 0   LD3 on (active low)\r\n"
-      "  mcu gpio read pg13      Read GPIO level\r\n"
+      "  mcu gpio write pe2 1        Morpho user GPIO (see mcu gpio list)\r\n"
+      "  mcu gpio read pg13          Read GPIO level\r\n"
       "  app list          List installed apps\r\n"
       "  app catalog       Show flash catalog status\r\n"
       "  app slots         Show native slot map\r\n"
@@ -308,7 +309,12 @@ static void shell_execute_line(void)
       "  sys part          Show flash partition map\r\n"
       "  sys top           RTOS/Lua heap + task list\r\n"
       "  ota status        OTA A/B bank status (stub)\r\n"
-      "  hal status        WiFi/CAN/motor placeholder status\r\n");
+      "  hal status        WiFi/CAN/motor placeholder status\r\n"
+      "  motor status      FOC telemetry (ref/speed/id/iq/vdc/duties)\r\n"
+      "  motor speed <rpm> Set speed reference\r\n"
+      "  motor cal         Recalibrate zero-current ADC offsets\r\n"
+      "  motor enable      Energize bridge (MOE on) -- verify first!\r\n"
+      "  motor disable     Tri-state gate outputs (MOE off)\r\n");
   }
   else if (shell_str_eq(s_line, "status"))
   {
@@ -614,6 +620,54 @@ static void shell_execute_line(void)
     char msg[64];
     TarsHal_FormatStatus(msg, sizeof(msg));
     shell_write_str(msg);
+  }
+  else if (strncmp(s_line, "motor", 5) == 0 && (s_line[5] == '\0' || s_line[5] == ' '))
+  {
+    const char *args = (s_line[5] == ' ') ? (s_line + 6) : "";
+
+    if (shell_str_eq(args, "enable"))
+    {
+      TarsFoc_Enable(1);
+      shell_write_str("motor: ENABLED (bridge live -- verify gate signals!)\r\n");
+    }
+    else if (shell_str_eq(args, "disable"))
+    {
+      TarsFoc_Enable(0);
+      shell_write_str("motor: disabled (outputs tri-stated)\r\n");
+    }
+    else if (strncmp(args, "speed ", 6) == 0)
+    {
+      float rpm = (float)strtod(args + 6, NULL);
+      TarsFoc_SetSpeedRef(rpm);
+      char msg[48];
+      (void)snprintf(msg, sizeof(msg), "motor: speed_ref=%.1f rpm\r\n", (double)rpm);
+      shell_write_str(msg);
+    }
+    else if (shell_str_eq(args, "cal"))
+    {
+      TarsFoc_Calibrate();
+      shell_write_str("motor: calibrating zero-current offsets (bridge off)\r\n");
+    }
+    else if (shell_str_eq(args, "status") || args[0] == '\0')
+    {
+      tars_foc_snapshot_t s;
+      char msg[224];
+      TarsFoc_GetSnapshot(&s);
+      (void)snprintf(msg, sizeof(msg),
+                     "motor: %s ref=%.1f spd=%.1frpm id=%.2f iq=%.2f vdc=%.1f\r\n"
+                     "  ia=%.2f ib=%.2f ic=%.2f duty=%.2f/%.2f/%.2f theta=%.2f fault=%u\r\n",
+                     (s.enabled ? "ON " : "off"),
+                     (double)s.speed_ref_rpm, (double)s.speed_est_rpm,
+                     (double)s.id, (double)s.iq, (double)s.vdc,
+                     (double)s.ia, (double)s.ib, (double)s.ic,
+                     (double)s.duty_a, (double)s.duty_b, (double)s.duty_c,
+                     (double)s.theta_est_rad, (unsigned)s.fault_code);
+      shell_write_str(msg);
+    }
+    else
+    {
+      shell_write_str("motor: enable | disable | speed <rpm> | cal | status\r\n");
+    }
   }
   else
   {

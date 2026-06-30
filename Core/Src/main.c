@@ -28,10 +28,11 @@
 #include "usart.h"
 #include "gpio.h"
 #include "fmc.h"
+#include "adc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "tars_features.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,12 +101,18 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CRC_Init();
+#if TARS_FEATURE_LCD
   MX_DMA2D_Init();
+#endif
   MX_FMC_Init();
+#if TARS_FEATURE_LCD
   MX_I2C3_Init();
   MX_SPI5_Init();
+#endif
   MX_TIM1_Init();
-  MX_USART1_UART_Init();
+  MX_ADC1_Init();
+  /* USART1 (PA9/PA10) intentionally not initialized: those pins are reclaimed
+   * for TIM1_CH2/CH3. The probe SCPI link runs on UART5 (PC12/PD2) instead. */
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */

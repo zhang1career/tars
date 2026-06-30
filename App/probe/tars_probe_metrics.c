@@ -1,6 +1,7 @@
 #include "tars_probe_metrics.h"
 #include "tars_lua.h"
 #include "tars_motor.h"
+#include "tars_foc.h"
 #include "tars_res_gpio.h"
 #include "main.h"
 #include "FreeRTOS.h"
@@ -53,6 +54,41 @@ float TarsProbeMetrics_Read(uint8_t provider, uint32_t arg)
     tars_motor_snapshot_t snap;
     TarsMotor_GetSnapshot(&snap);
     return (float)snap.loop_count;
+  }
+
+  case TARS_PROBE_SRC_FOC_ID:
+  {
+    tars_foc_snapshot_t foc;
+    TarsFoc_GetSnapshot(&foc);
+    return foc.id;
+  }
+
+  case TARS_PROBE_SRC_FOC_IQ:
+  {
+    tars_foc_snapshot_t foc;
+    TarsFoc_GetSnapshot(&foc);
+    return foc.iq;
+  }
+
+  case TARS_PROBE_SRC_FOC_THETA:
+  {
+    tars_foc_snapshot_t foc;
+    TarsFoc_GetSnapshot(&foc);
+    return foc.theta_est_rad * 57.2957795f;
+  }
+
+  case TARS_PROBE_SRC_FOC_SPEED:
+  {
+    tars_foc_snapshot_t foc;
+    TarsFoc_GetSnapshot(&foc);
+    return foc.speed_est_rpm;
+  }
+
+  case TARS_PROBE_SRC_FOC_VDC:
+  {
+    tars_foc_snapshot_t foc;
+    TarsFoc_GetSnapshot(&foc);
+    return foc.vdc;
   }
 
   case TARS_PROBE_SRC_BUTTON:

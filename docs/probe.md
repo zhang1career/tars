@@ -12,15 +12,15 @@ using a minimal SCPI dialect. It does two things:
 
 | Setting | Value |
 |---------|-------|
-| Peripheral | USART1 (PA9 = TX, PA10 = RX) |
+| Peripheral | UART5 (PC12 = TX, PD2 = RX) |
 | Baud | 115200, 8N1 |
-| TX | DMA (DMA2 Stream7) |
+| TX | DMA (DMA1 Stream7, Channel 4) |
 | RX | interrupt, byte-by-byte ring buffer |
 
-> **Hardware note.** USART1 PA9/PA10 are routed to the on-board ST-LINK. Only an
-> ST-LINK with VCP (USB PID `0x374B`) exposes this as a host COM port. Plain
-> ST-LINK/V2 (PID `0x3748`, as on some F429I-DISC1 units) does **not** — in that
-> case attach an external USB-TTL adapter to **PA9 / PA10 / GND**.
+> **Hardware note.** The probe moved off USART1 (PA9/PA10) to **UART5 (PC12/PD2)**
+> so TIM1's high-side PWM channels can reclaim PA9/PA10 for the motor-control
+> bring-up. PC12/PD2 are **not** on the on-board ST-LINK VCP, so attach an
+> external USB-TTL adapter to **PC12 (TX) / PD2 (RX) / GND**.
 
 This channel is independent of the USB CDC shell (`tars>`), which stays on USB.
 
