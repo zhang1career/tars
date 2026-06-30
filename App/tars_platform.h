@@ -27,6 +27,7 @@
 
 #define TARS_LFS_PATH_CATALOG     "/sys/catalog"
 #define TARS_LFS_PATH_APPS        "/apps"
+#define TARS_LFS_PATH_RES_PROFILE "/sys/res_profile.bin"
 
 /* --- OTA staging (future, Bank2 sectors 12-13) --- */
 #define TARS_OTA_FLASH_BASE       0x08100000UL

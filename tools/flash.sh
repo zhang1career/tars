@@ -80,7 +80,7 @@ if [[ ! -f "$BUILD_DIR/build.ninja" && ! -f "$BUILD_DIR/Makefile" ]]; then
   cmake --preset Release
 fi
 
-echo "==> build (Release)"
+echo "==> build pass 1 (Release)"
 if command -v cmake >/dev/null 2>&1; then
   cmake --build "$BUILD_DIR" --target tars
 elif [[ -f "$BUILD_DIR/build.ninja" ]] && command -v ninja >/dev/null 2>&1; then
@@ -92,6 +92,26 @@ fi
 
 if [[ ! -f "$ELF" ]]; then
   echo "missing ELF: $ELF" >&2
+  exit 1
+fi
+
+if command -v "$OBJCOPY" >/dev/null 2>&1; then
+  FW_BIN="$BUILD_DIR/tars.fw.bin"
+  for pass in 1 2 3; do
+    "$OBJCOPY" -O binary "$ELF" "$FW_BIN"
+    python3 "$ROOT/tools/fw-identity-gen.py" "$FW_BIN" \
+      -o "$ROOT/generated/fw/tars_fw_identity.c"
+    echo "==> build pass $((pass + 1)) (embed firmware identity)"
+    if command -v cmake >/dev/null 2>&1; then
+      cmake --build "$BUILD_DIR" --target tars
+    elif [[ -f "$BUILD_DIR/build.ninja" ]] && command -v ninja >/dev/null 2>&1; then
+      (cd "$BUILD_DIR" && ninja tars)
+    fi
+  done
+fi
+
+if [[ ! -f "$ELF" ]]; then
+  echo "missing ELF after identity pass: $ELF" >&2
   exit 1
 fi
 

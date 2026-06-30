@@ -33,6 +33,26 @@ static int api_pwm_duty(const char *channel, float duty_pct)
   return TarsMcu_PwmSetDuty(channel, duty_pct);
 }
 
+static int api_res_save(void)
+{
+  return TarsMcu_ProfileSave();
+}
+
+static int api_res_load(void)
+{
+  return TarsMcu_ProfileLoad();
+}
+
+static int api_res_clear(void)
+{
+  return TarsMcu_ProfileClear();
+}
+
+static int api_pwm_persist(const char *channel, int boot_enable)
+{
+  return TarsMcu_PwmSetPersist(channel, boot_enable);
+}
+
 static void api_sleep_ms(uint32_t ms)
 {
   osDelay(ms);
@@ -53,6 +73,10 @@ void TarsApi_Init(void)
   s_api.pwm_duty = api_pwm_duty;
   s_api.sleep_ms = api_sleep_ms;
   s_api.log = api_log;
+  s_api.res_save = api_res_save;
+  s_api.res_load = api_res_load;
+  s_api.res_clear = api_res_clear;
+  s_api.pwm_persist = api_pwm_persist;
 }
 
 const tars_api_t *TarsApp_GetApi(void)

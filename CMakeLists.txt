@@ -152,6 +152,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_gpio.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_mgr.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_pwm.c
+    ${CMAKE_SOURCE_DIR}/App/resource/tars_res_profile.c
+    ${CMAKE_SOURCE_DIR}/generated/fw/tars_fw_identity.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe_uart.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe_capture.c

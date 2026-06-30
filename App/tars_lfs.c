@@ -211,9 +211,21 @@ tars_status_t TarsLfs_WriteFile(const char *path, const uint8_t *data, uint32_t 
   }
 
   written = lfs_file_write(&s_lfs, &file, data, size);
-  (void)lfs_file_close(&s_lfs, &file);
-
   if (written != (lfs_ssize_t)size)
+  {
+    (void)lfs_file_close(&s_lfs, &file);
+    return TARS_ERR_FLASH;
+  }
+
+  err = lfs_file_sync(&s_lfs, &file);
+  if (err != 0)
+  {
+    (void)lfs_file_close(&s_lfs, &file);
+    return TARS_ERR_FLASH;
+  }
+
+  err = lfs_file_close(&s_lfs, &file);
+  if (err != 0)
   {
     return TARS_ERR_FLASH;
   }

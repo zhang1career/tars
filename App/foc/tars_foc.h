@@ -47,8 +47,11 @@ typedef struct {
   uint8_t  fault_code;      /* 0 = none                              */
 } tars_foc_snapshot_t;
 
-/* One-time init: zeroes controller state. Does NOT start the inverter. */
+/* One-time init: zeroes controller state. Does NOT start TIM1/ADC. */
 void TarsFoc_Init(void);
+
+/* Start TIM1/ADC for FOC (bridge still off until TarsFoc_Enable). */
+void TarsFoc_BootHw(void);
 
 /* Control surface (thread-safe). */
 void TarsFoc_SetSpeedRef(float rpm);

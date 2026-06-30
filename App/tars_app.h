@@ -8,7 +8,7 @@
 #define TARS_LUA_MAGIC            0x5450484CUL /* 'TPHL' */
 #define TARS_CATALOG_MAGIC        0x54504354UL /* 'TPCT' */
 
-#define TARS_API_VERSION          1U
+#define TARS_API_VERSION          2U
 
 #define TARS_NAME_MAX             16U
 #define TARS_RESOURCE_MAX         16U
@@ -110,6 +110,10 @@ typedef struct {
   int (*pwm_duty)(const char *channel, float duty_pct);
   void (*sleep_ms)(uint32_t ms);
   void (*log)(const char *msg);
+  int (*res_save)(void);
+  int (*res_load)(void);
+  int (*res_clear)(void);
+  int (*pwm_persist)(const char *channel, int boot_enable);
 } tars_api_t;
 
 typedef void (*tars_native_entry_fn)(const tars_api_t *api);

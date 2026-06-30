@@ -28,8 +28,10 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  "mcu commands:\r\n"
                  "  mcu info\r\n"
                  "  mcu res list|status <id>|grant <id> <owner>\r\n"
+                 "  mcu res save|load|clear|profile show\r\n"
                  "  mcu pwm list|status [ch]|enable <ch> <0|1>\r\n"
                  "  mcu pwm duty <ch> <0-100>|freq <tim> <hz>\r\n"
+                 "  mcu pwm persist <ch> <0|1>\r\n"
                  "  mcu gpio write|read|list\r\n"
                  "  mcu pinmap\r\n"
                  "  owners: none gpio pwm foc system\r\n");
@@ -160,7 +162,70 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu res: use list|status|grant\r\n");
+    if (mcu_str_eq(rest, "save"))
+    {
+      int st = TarsMcu_ProfileSave();
+
+      if (st != 0)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu res save: err=%s\r\n",
+                       TarsMcu_ProfileErrText(st));
+      }
+      else
+      {
+        (void)snprintf(out, out_size, "mcu res save: ok\r\n");
+      }
+      return 1;
+    }
+
+    if (mcu_str_eq(rest, "load"))
+    {
+      int st = TarsMcu_ProfileLoad();
+
+      if (st != 0)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu res load: err=%s\r\n",
+                       TarsMcu_ProfileErrText(st));
+      }
+      else
+      {
+        (void)snprintf(out, out_size, "mcu res load: ok\r\n");
+      }
+      return 1;
+    }
+
+    if (mcu_str_eq(rest, "clear"))
+    {
+      int st = TarsMcu_ProfileClear();
+
+      if (st != 0)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu res clear: err=%s\r\n",
+                       TarsMcu_ProfileErrText(st));
+      }
+      else
+      {
+        (void)snprintf(out, out_size, "mcu res clear: ok\r\n");
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "profile ", 8) == 0)
+    {
+      if (mcu_str_eq(rest + 8, "show"))
+      {
+        (void)TarsMcu_ProfileFormatStored(out, out_size);
+        return 1;
+      }
+    }
+
+    (void)snprintf(out, out_size, "mcu res: use list|status|grant|save|load|clear|profile show\r\n");
     return 1;
   }
 
@@ -309,7 +374,57 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq\r\n");
+    if (strncmp(rest, "persist ", 8) == 0)
+    {
+      unsigned long boot_ul = 0UL;
+
+      if (sscanf(rest + 8, "%23s %lu", ch, &boot_ul) != 2)
+      {
+        int cur = 0;
+
+        if (sscanf(rest + 8, "%23s", ch) != 1)
+        {
+          (void)snprintf(out, out_size, "mcu pwm persist: use persist <ch> <0|1>\r\n");
+          return 1;
+        }
+
+        if (TarsMcu_PwmGetPersist(ch, &cur) != 0)
+        {
+          cur = 0;
+        }
+
+        (void)snprintf(out,
+                       out_size,
+                       "mcu pwm persist: ch=%s boot=%d\r\n",
+                       ch,
+                       cur);
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_PwmSetPersist(ch, (int)boot_ul);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm persist: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm persist: ch=%s boot=%lu\r\n",
+                         ch,
+                         boot_ul);
+        }
+      }
+      return 1;
+    }
+
+    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq|persist\r\n");
     return 1;
   }
 

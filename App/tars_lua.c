@@ -145,6 +145,64 @@ static int l_tars_pwm_duty(lua_State *L)
   return 1;
 }
 
+static int l_tars_res_save(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  int st = 0;
+
+  if (api != NULL && api->api_version >= 2U && api->res_save != NULL)
+  {
+    st = api->res_save();
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
+static int l_tars_res_load(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  int st = 0;
+
+  if (api != NULL && api->api_version >= 2U && api->res_load != NULL)
+  {
+    st = api->res_load();
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
+static int l_tars_res_clear(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  int st = 0;
+
+  if (api != NULL && api->api_version >= 2U && api->res_clear != NULL)
+  {
+    st = api->res_clear();
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
+static int l_tars_pwm_persist(lua_State *L)
+{
+  const tars_api_t *api = TarsApp_GetApi();
+  const char *channel = luaL_checkstring(L, 1);
+  int boot = (int)luaL_checkinteger(L, 2);
+  int st = 0;
+
+  if (api != NULL && api->api_version >= 2U && api->pwm_persist != NULL)
+  {
+    st = api->pwm_persist(channel, boot);
+  }
+
+  lua_pushinteger(L, st);
+  return 1;
+}
+
 static int l_tars_sleep(lua_State *L)
 {
   const tars_api_t *api = TarsApp_GetApi();
@@ -389,6 +447,10 @@ static int tars_lua_register_api(lua_State *L)
     {"gpio_read", l_tars_gpio_read},
     {"pwm_enable", l_tars_pwm_enable},
     {"pwm_duty", l_tars_pwm_duty},
+    {"pwm_persist", l_tars_pwm_persist},
+    {"res_save", l_tars_res_save},
+    {"res_load", l_tars_res_load},
+    {"res_clear", l_tars_res_clear},
     {"sleep", l_tars_sleep},
     {"log", l_tars_log},
     {"yield", l_tars_yield},

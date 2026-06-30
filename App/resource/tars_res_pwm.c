@@ -21,6 +21,7 @@ typedef struct {
 typedef struct {
   const tars_mcu_pwm_entry_t *map;
   uint8_t duty_pct;
+  uint8_t boot_enable;
   uint8_t running;
   int8_t tim_slot;
 } tars_pwm_ch_t;
@@ -218,6 +219,7 @@ static int pwm_find_ch_slot(const char *channel, int create)
   i = s_ch_count++;
   s_ch_pool[i].map = NULL;
   s_ch_pool[i].duty_pct = 0U;
+  s_ch_pool[i].boot_enable = 0U;
   s_ch_pool[i].running = 0U;
   s_ch_pool[i].tim_slot = -1;
   return (int)i;
@@ -801,4 +803,152 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
                    (unsigned long)afr);
   }
   return 0;
+}
+
+int TarsResPwm_SetPersist(const char *channel, int boot_enable)
+{
+  int ch_slot;
+
+  if (channel == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  ch_slot = pwm_find_ch_slot(channel, 1);
+  if (ch_slot < 0)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  s_ch_pool[(uint32_t)ch_slot].boot_enable = (boot_enable != 0) ? 1U : 0U;
+  return 0;
+}
+
+int TarsResPwm_GetPersist(const char *channel, int *boot_enable_out)
+{
+  int ch_slot;
+
+  if ((channel == NULL) || (boot_enable_out == NULL))
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  ch_slot = pwm_find_ch_slot(channel, 0);
+  if (ch_slot < 0)
+  {
+    *boot_enable_out = 0;
+    return 0;
+  }
+
+  *boot_enable_out = (int)s_ch_pool[(uint32_t)ch_slot].boot_enable;
+  return 0;
+}
+
+int TarsResPwm_GetDuty(const char *channel, uint8_t *duty_out)
+{
+  int ch_slot;
+
+  if ((channel == NULL) || (duty_out == NULL))
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  ch_slot = pwm_find_ch_slot(channel, 0);
+  if (ch_slot < 0)
+  {
+    *duty_out = 0U;
+    return 0;
+  }
+
+  *duty_out = s_ch_pool[(uint32_t)ch_slot].duty_pct;
+  return 0;
+}
+
+int TarsResPwm_GetTimFreq(const char *tim_id, uint32_t *freq_hz_out)
+{
+  uint32_t pwm_count = 0U;
+  const tars_mcu_pwm_entry_t *table = TarsMcuPinmap_GetPwmTable(&pwm_count);
+  TIM_TypeDef *tim = NULL;
+  uint32_t i;
+
+  if ((tim_id == NULL) || (freq_hz_out == NULL))
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  for (i = 0U; i < pwm_count; i++)
+  {
+    if ((table[i].tim_id != NULL) && (strcmp(table[i].tim_id, tim_id) == 0))
+    {
+      tim = table[i].tim;
+      break;
+    }
+  }
+
+  if (tim == NULL)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (tim == TIM1)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  {
+    int slot = pwm_find_tim_slot(tim, 0);
+
+    if (slot >= 0)
+    {
+      *freq_hz_out = s_tim_pool[(uint32_t)slot].freq_hz;
+      return 0;
+    }
+  }
+
+  if (tim == TIM9)
+  {
+    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim9);
+
+    if (arr > 0U)
+    {
+      *freq_hz_out = pwm_tim_clk_hz(TIM9) / (arr + 1U);
+    }
+    else
+    {
+      *freq_hz_out = TARS_PWM_DEFAULT_HZ;
+    }
+    return 0;
+  }
+
+  *freq_hz_out = TARS_PWM_DEFAULT_HZ;
+  return 0;
+}
+
+int TarsResPwm_TimFreqConfigured(const char *tim_id)
+{
+  uint32_t pwm_count = 0U;
+  const tars_mcu_pwm_entry_t *table = TarsMcuPinmap_GetPwmTable(&pwm_count);
+  TIM_TypeDef *tim = NULL;
+  uint32_t i;
+
+  if (tim_id == NULL)
+  {
+    return 0;
+  }
+
+  for (i = 0U; i < pwm_count; i++)
+  {
+    if ((table[i].tim_id != NULL) && (strcmp(table[i].tim_id, tim_id) == 0))
+    {
+      tim = table[i].tim;
+      break;
+    }
+  }
+
+  if ((tim == NULL) || (tim == TIM1))
+  {
+    return 0;
+  }
+
+  return (pwm_find_tim_slot(tim, 0) >= 0) ? 1 : 0;
 }

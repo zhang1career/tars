@@ -96,7 +96,17 @@ void TarsFoc_Init(void)
   s_snap.state = TARS_FOC_STATE_IDLE;
   s_snap.fault_code = 0U;
 
+  s_initialized = 1U;
+}
+
+void TarsFoc_BootHw(void)
+{
 #if TARS_FOC_DRIVE_PWM
+  if (s_initialized == 0U)
+  {
+    TarsFoc_Init();
+  }
+
   /* TODO(bring-up): calibrate s_ia/ib/ic_offset by averaging ADC samples with
    * the bridge disabled (MOE off) before the first enable. */
 
@@ -119,8 +129,6 @@ void TarsFoc_Init(void)
    * `motor cal` once the power stage is up and the motor is at rest. */
   TarsFoc_Calibrate();
 #endif
-
-  s_initialized = 1U;
 }
 
 void TarsFoc_Calibrate(void)
