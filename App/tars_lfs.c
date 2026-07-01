@@ -120,6 +120,12 @@ static tars_status_t lfs_ensure_dirs(void)
     return TARS_ERR_FLASH;
   }
 
+  err = lfs_mkdir(&s_lfs, TARS_LFS_PATH_CONFIG);
+  if (err != 0 && err != LFS_ERR_EXIST)
+  {
+    return TARS_ERR_FLASH;
+  }
+
   err = lfs_mkdir(&s_lfs, TARS_LFS_PATH_APPS);
   if (err != 0 && err != LFS_ERR_EXIST)
   {

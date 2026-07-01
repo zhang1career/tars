@@ -19,6 +19,7 @@
 #define TARS_RES_PROFILE_ID_LEN     16U
 #define TARS_RES_PROFILE_TIM_LEN    8U
 #define TARS_BOARD_ID_STORE_LEN     24U
+#define TARS_LFS_PATH_RES_PROFILE_LEGACY "/sys/res_profile.bin"
 
 typedef struct __attribute__((packed)) {
   char     id[TARS_RES_PROFILE_ID_LEN];
@@ -325,13 +326,44 @@ static int profile_collect_tim(tars_prof_tim_t *out, uint32_t *count_out)
 
 static int profile_ensure_config_dir(void)
 {
-  /* Profile lives under /sys (same partition dir as catalog). */
-  if (TarsLfs_MkDir("/sys") != TARS_OK)
+  if (TarsLfs_MkDir(TARS_LFS_PATH_CONFIG) != TARS_OK)
   {
     return TARS_RES_PROFILE_ERR_IO;
   }
 
   return 0;
+}
+
+/* One-time move from interim /sys/res_profile.bin (debug workaround). */
+static void profile_migrate_legacy_path(void)
+{
+  uint32_t size = 0U;
+  tars_status_t st;
+
+  (void)profile_ensure_config_dir();
+
+  st = TarsLfs_ReadFile(TARS_LFS_PATH_RES_PROFILE,
+                       s_profile_file_buf,
+                       (uint32_t)sizeof(s_profile_file_buf),
+                       &size);
+  if ((st == TARS_OK) && (size > 0U))
+  {
+    return;
+  }
+
+  st = TarsLfs_ReadFile(TARS_LFS_PATH_RES_PROFILE_LEGACY,
+                       s_profile_file_buf,
+                       (uint32_t)sizeof(s_profile_file_buf),
+                       &size);
+  if ((st != TARS_OK) || (size == 0U))
+  {
+    return;
+  }
+
+  if (TarsLfs_WriteFile(TARS_LFS_PATH_RES_PROFILE, s_profile_file_buf, size) == TARS_OK)
+  {
+    (void)TarsLfs_RemoveFile(TARS_LFS_PATH_RES_PROFILE_LEGACY);
+  }
 }
 
 static int profile_parse_buf(const uint8_t *buf, uint32_t size)
@@ -466,6 +498,8 @@ int TarsResProfile_Load(void)
   {
     return TARS_RES_PROFILE_ERR_IO;
   }
+
+  profile_migrate_legacy_path();
 
   st = TarsLfs_ReadFile(TARS_LFS_PATH_RES_PROFILE,
                        s_profile_file_buf,

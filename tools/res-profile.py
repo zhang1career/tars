@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack/unpack TARS resource profile (/sys/res_profile.bin)."""
+"""Pack/unpack TARS resource profile (/config/res_profile.bin)."""
 
 from __future__ import annotations
 

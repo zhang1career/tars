@@ -3,8 +3,12 @@
 Runtime resource/PWM configuration can be saved to LittleFS:
 
 ```
-/sys/res_profile.bin
+/config/res_profile.bin
 ```
+
+`/config` is created at LittleFS mount (with `/sys` and `/apps`). Saves use
+`lfs_file_sync` + verified read-back so a truncated 0-byte file cannot report
+`save: ok`.
 
 ## Shell
 
