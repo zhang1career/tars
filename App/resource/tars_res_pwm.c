@@ -1,6 +1,7 @@
 #include "tars_res_pwm.h"
 #include "tars_res_mgr.h"
 #include "tars_mcu_pinmap.h"
+#include "tars_foc.h"
 #include "main.h"
 #include "tim.h"
 #include <stdio.h>
@@ -412,21 +413,11 @@ static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_p
   return 0;
 }
 
+/* TIM1 can be taken by shell PWM only while FOC is idle (bridge not
+ * commutating). A running controller holds the timer exclusively. */
 static int pwm_foc_tim_active(void)
 {
-  if (TarsResMgr_GetActive("tim1_ch1") == TARS_OWNER_FOC)
-  {
-    return 1;
-  }
-  if (TarsResMgr_GetActive("tim1_ch2") == TARS_OWNER_FOC)
-  {
-    return 1;
-  }
-  if (TarsResMgr_GetActive("tim1_ch3") == TARS_OWNER_FOC)
-  {
-    return 1;
-  }
-  return 0;
+  return TarsFoc_IsEnabled();
 }
 
 int TarsResPwm_Enable(const char *channel, int enable)
@@ -450,6 +441,13 @@ int TarsResPwm_Enable(const char *channel, int enable)
   if ((map->advanced_tim != 0U) && (enable != 0) && (pwm_foc_tim_active() != 0))
   {
     return TARS_RES_ERR_ACTIVE;
+  }
+
+  /* Handoff: take the TIM1 physical domain from an idle FOC so its ISR stops
+   * writing the neutral compares and this channel's duty actually sticks. */
+  if ((map->advanced_tim != 0U) && (enable != 0))
+  {
+    TarsResMgr_TimDomainForceSet(map->tim_id, TARS_OWNER_PWM);
   }
 
   ch_slot = pwm_find_ch_slot(channel, 1);
@@ -484,6 +482,8 @@ int TarsResPwm_Enable(const char *channel, int enable)
         if (map->advanced_tim != 0U)
         {
           __HAL_TIM_MOE_DISABLE(htim);
+          /* Hand the TIM1 domain back to FOC; its ISR resumes neutral duty. */
+          TarsResMgr_TimDomainForceSet(map->tim_id, TARS_OWNER_FOC);
         }
       }
 
@@ -607,6 +607,18 @@ int TarsResPwm_SetDuty(const char *channel, float duty_pct)
 
   pwm_apply_compare(htim, map->hal_channel, pwm_pulse_from_duty(htim, duty));
   return 0;
+}
+
+int TarsResPwm_IsRunning(const char *channel)
+{
+  int ch_slot = pwm_find_ch_slot(channel, 0);
+
+  if (ch_slot < 0)
+  {
+    return 0;
+  }
+
+  return (s_ch_pool[(uint32_t)ch_slot].running != 0U) ? 1 : 0;
 }
 
 int TarsResPwm_SetFreq(const char *tim_id, uint32_t freq_hz)
@@ -741,12 +753,13 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
 
   written = snprintf(out,
                      out_size,
-                     "pwm: ch=%s pin=%s tim=%s owner=%s active=%s run=%u duty=%u%%\r\n",
+                     "pwm: ch=%s pin=%s tim=%s owner=%s active=%s drv=%s run=%u duty=%u%%\r\n",
                      map->channel,
                      map->pin_name,
                      map->tim_id ? map->tim_id : "?",
                      TarsOwner_ToString(TarsResMgr_GetOwner(channel)),
                      TarsOwner_ToString(TarsResMgr_GetActive(channel)),
+                     TarsOwner_ToString(TarsResMgr_TimDomainActiveOwner(map->tim_id)),
                      (unsigned)((ch != NULL) ? ch->running : 0U),
                      (unsigned)((ch != NULL) ? ch->duty_pct : 0U));
   if ((written < 0) || ((uint32_t)written >= out_size))

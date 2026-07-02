@@ -1,4 +1,5 @@
 #include "tars_mcu_pinmap.h"
+#include "tars_res_mgr.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -257,7 +258,7 @@ void TarsMcuPinmap_FormatGpioList(char *out, uint32_t out_size)
                      "  %s (%s) owner=%s\r\n",
                      table[i].pin_name,
                      table[i].alias,
-                     TarsOwner_ToString(table[i].default_owner));
+                     TarsOwner_ToString(TarsResMgr_GetOwner(table[i].pin_name)));
     }
     else
     {
@@ -265,7 +266,7 @@ void TarsMcuPinmap_FormatGpioList(char *out, uint32_t out_size)
                      sizeof(line),
                      "  %s owner=%s\r\n",
                      table[i].pin_name,
-                     TarsOwner_ToString(table[i].default_owner));
+                     TarsOwner_ToString(TarsResMgr_GetOwner(table[i].pin_name)));
     }
 
     strncat(out, line, out_size - strlen(out) - 1U);
@@ -295,7 +296,7 @@ void TarsMcuPinmap_FormatPwmList(char *out, uint32_t out_size)
                    table[i].channel,
                    (table[i].advanced_tim != 0U) ? "adv" : "pwm",
                    table[i].pin_name,
-                   TarsOwner_ToString(table[i].default_owner));
+                   TarsOwner_ToString(TarsResMgr_GetOwner(table[i].channel)));
     strncat(out, line, out_size - strlen(out) - 1U);
   }
 }

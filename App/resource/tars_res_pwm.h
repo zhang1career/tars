@@ -14,4 +14,6 @@ int TarsResPwm_GetDuty(const char *channel, uint8_t *duty_out);
 int TarsResPwm_GetTimFreq(const char *tim_id, uint32_t *freq_hz_out);
 int TarsResPwm_TimFreqConfigured(const char *tim_id);
 
+int TarsResPwm_IsRunning(const char *channel);
+
 #endif /* TARS_RES_PWM_H */

@@ -628,8 +628,14 @@ static void shell_execute_line(void)
 
     if (shell_str_eq(args, "enable"))
     {
-      TarsFoc_Enable(1);
-      shell_write_str("motor: ENABLED (bridge live -- verify gate signals!)\r\n");
+      if (TarsFoc_Enable(1) != 0)
+      {
+        shell_write_str("motor: ENABLED (bridge live -- verify gate signals!)\r\n");
+      }
+      else
+      {
+        shell_write_str("motor: REFUSED (TIM1 held by shell PWM -- disable pwm0 first)\r\n");
+      }
     }
     else if (shell_str_eq(args, "disable"))
     {

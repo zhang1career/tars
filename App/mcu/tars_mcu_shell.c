@@ -34,6 +34,7 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  "  mcu pwm persist <ch> <0|1>\r\n"
                  "  mcu gpio write|read|list\r\n"
                  "  mcu pinmap\r\n"
+                 "  mcu spec list|<id>\r\n"
                  "  owners: none gpio pwm foc system\r\n");
 }
 
@@ -84,6 +85,21 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
   if (mcu_str_eq(sub, "info"))
   {
     TarsMcu_FormatInfo(out, out_size);
+    return 1;
+  }
+
+  if (mcu_str_eq(sub, "spec"))
+  {
+    if ((rest[0] == '\0') || mcu_str_eq(rest, "list"))
+    {
+      TarsMcu_FormatSpecList(out, out_size);
+      return 1;
+    }
+
+    if (TarsMcu_FormatSpec(rest, out, out_size) != 0)
+    {
+      return 1;
+    }
     return 1;
   }
 
@@ -333,11 +349,22 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
         }
         else
         {
-          (void)snprintf(out,
-                         out_size,
-                         "mcu pwm duty: ch=%s duty=%lu\r\n",
-                         ch,
-                         duty_ul);
+          if (TarsResPwm_IsRunning(ch) != 0)
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu pwm duty: ch=%s duty=%lu\r\n",
+                           ch,
+                           duty_ul);
+          }
+          else
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu pwm duty: ch=%s duty=%lu (stored; use enable to drive)\r\n",
+                           ch,
+                           duty_ul);
+          }
         }
       }
       return 1;

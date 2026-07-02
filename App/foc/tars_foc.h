@@ -55,8 +55,17 @@ void TarsFoc_BootHw(void);
 
 /* Control surface (thread-safe). */
 void TarsFoc_SetSpeedRef(float rpm);
-void TarsFoc_Enable(int enable);
+
+/* Enable/disable the controller. Returns 1 if the resulting state matches the
+ * request, 0 if enabling was refused (TIM1 held by a peer function, e.g. shell
+ * PWM). Disabling always returns 1. */
+int TarsFoc_Enable(int enable);
+
 void TarsFoc_GetSnapshot(tars_foc_snapshot_t *out);
+
+/* 1 = controller enabled (bridge commutating). Used by the resource layer to
+ * decide whether TIM1 can be handed to shell PWM (only when FOC is idle). */
+int TarsFoc_IsEnabled(void);
 
 /* Arm zero-current ADC offset calibration. Averages samples with the bridge
  * off; call when the power stage is up and the motor is at rest. */

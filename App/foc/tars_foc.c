@@ -112,6 +112,11 @@ void TarsFoc_BootHw(void)
 
   /* Injected sampling is hardware-triggered by TIM1 TRGO; JEOC drives the
    * control loop. Start it, then start all three PWM channel pairs. */
+  /* Register FOC as the active driver of the TIM1 physical domain before the
+   * ISR starts writing compares, so a shell `pwm enable pwm0` correctly sees
+   * the conflict instead of silently losing to this loop. */
+  (void)TarsResMgr_TimDomainForceSet("tim1", TARS_OWNER_FOC);
+
   (void)HAL_ADCEx_InjectedStart_IT(&hadc1);
 
   (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -146,18 +151,25 @@ void TarsFoc_SetSpeedRef(float rpm)
   s_speed_ref_rpm = rpm;
 }
 
-void TarsFoc_Enable(int enable)
+int TarsFoc_Enable(int enable)
 {
   s_enable = (enable != 0) ? 1U : 0U;
 #if TARS_FOC_DRIVE_PWM
   if (s_enable != 0U)
   {
+    /* TIM1 must not be held by shell PWM (peer function) before we commutate. */
+    if (TarsResMgr_TimDomainAcquire("tim1", TARS_OWNER_FOC) != 0)
+    {
+      s_enable = 0U;
+      return 0;
+    }
+
     if ((TarsResMgr_Acquire("tim1_ch1", TARS_OWNER_FOC) != 0) ||
         (TarsResMgr_Acquire("tim1_ch2", TARS_OWNER_FOC) != 0) ||
         (TarsResMgr_Acquire("tim1_ch3", TARS_OWNER_FOC) != 0))
     {
       s_enable = 0U;
-      return;
+      return 0;
     }
     __HAL_TIM_MOE_ENABLE(&htim1);
   }
@@ -169,6 +181,12 @@ void TarsFoc_Enable(int enable)
     (void)TarsResMgr_Release("tim1_ch3", TARS_OWNER_FOC);
   }
 #endif
+  return 1;
+}
+
+int TarsFoc_IsEnabled(void)
+{
+  return (s_enable != 0U) ? 1 : 0;
 }
 
 void TarsFoc_GetSnapshot(tars_foc_snapshot_t *out)
@@ -262,6 +280,10 @@ void TarsFoc_ControlLoopISR(void)
 
   foc_run_once(ia, ib, ic, vdc);
 
+  /* Only drive the compare registers when FOC actually owns the TIM1 physical
+   * domain. If a peer function (shell PWM) has taken TIM1, stay silent so it
+   * is not fighting this loop for the CCRs. Lock-free volatile read. */
+  if (TarsResMgr_Tim1ActiveOwnerFast() == TARS_OWNER_FOC)
   {
     uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint32_t)(s_snap.duty_a * (float)arr));

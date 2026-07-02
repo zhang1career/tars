@@ -3,16 +3,100 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TARS_RES_MAX   48U
+#define TARS_RES_MAX          48U
+#define TARS_RES_TIM_DOMAINS  4U
 
 typedef struct {
   tars_owner_t owner;
   tars_owner_t active;
 } tars_res_slot_t;
 
+/* Physical arbitration domain for one timer. `active_owner` is the peer
+ * function currently driving the timer; it is volatile so the FOC ISR can
+ * read it lock-free (see TarsResMgr_Tim1ActiveOwnerFast). */
+typedef struct {
+  const char           *tim_id;
+  uint8_t               whole_timer;   /* 1 = advanced timer, exclusive */
+  volatile tars_owner_t active_owner;
+} tars_tim_domain_t;
+
 static tars_res_slot_t s_slots[TARS_RES_MAX];
 static uint32_t s_slot_count;
 static osMutexId s_mutex;
+
+static tars_tim_domain_t s_tim_domains[TARS_RES_TIM_DOMAINS];
+static uint32_t s_tim_domain_count;
+static int s_tim1_domain_idx = -1;
+
+static int tim_domain_find(const char *tim_id)
+{
+  uint32_t i;
+
+  if (tim_id == NULL)
+  {
+    return -1;
+  }
+
+  for (i = 0U; i < s_tim_domain_count; i++)
+  {
+    if (strcmp(s_tim_domains[i].tim_id, tim_id) == 0)
+    {
+      return (int)i;
+    }
+  }
+
+  return -1;
+}
+
+static void tim_domains_build(void)
+{
+  uint32_t pwm_count = 0U;
+  const tars_mcu_pwm_entry_t *pwm = TarsMcuPinmap_GetPwmTable(&pwm_count);
+  uint32_t i;
+
+  s_tim_domain_count = 0U;
+  s_tim1_domain_idx = -1;
+
+  for (i = 0U; i < pwm_count; i++)
+  {
+    int idx;
+
+    if (pwm[i].tim_id == NULL)
+    {
+      continue;
+    }
+
+    idx = tim_domain_find(pwm[i].tim_id);
+    if (idx < 0)
+    {
+      if (s_tim_domain_count >= TARS_RES_TIM_DOMAINS)
+      {
+        continue;
+      }
+      idx = (int)s_tim_domain_count++;
+      s_tim_domains[idx].tim_id = pwm[i].tim_id;
+      s_tim_domains[idx].whole_timer = 0U;
+      s_tim_domains[idx].active_owner = TARS_OWNER_NONE;
+    }
+
+    if (pwm[i].advanced_tim != 0U)
+    {
+      s_tim_domains[idx].whole_timer = 1U;
+    }
+
+    if (pwm[i].tim == TIM1)
+    {
+      s_tim1_domain_idx = idx;
+    }
+  }
+
+  /* TIM1 is FOC-owned by default (matches the pin map default_owner=foc on
+   * tim1_ch1..3); FOC's boot ISR starts driving it before any grant. */
+  if (s_tim1_domain_idx >= 0)
+  {
+    s_tim_domains[(uint32_t)s_tim1_domain_idx].active_owner = TARS_OWNER_FOC;
+  }
+}
 
 static int res_find_index(const char *id, uint32_t *index_out)
 {
@@ -179,6 +263,8 @@ void TarsResMgr_Init(void)
     s_slots[i].owner = cat[i].default_owner;
     s_slots[i].active = TARS_OWNER_NONE;
   }
+
+  tim_domains_build();
 
   if (s_mutex == NULL)
   {
@@ -528,4 +614,106 @@ void TarsResMgr_FormatStatus(const char *id, char *out, uint32_t out_size)
                  TarsOwner_ToString(s_slots[idx].owner),
                  TarsOwner_ToString(s_slots[idx].active),
                  (unsigned)cat->lock_order);
+}
+
+int TarsResMgr_TimDomainAcquire(const char *tim_id, tars_owner_t owner)
+{
+  int idx;
+  int st = 0;
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  idx = tim_domain_find(tim_id);
+  if (idx < 0)
+  {
+    st = TARS_RES_ERR_SCOPE;
+  }
+  else if (s_tim_domains[(uint32_t)idx].whole_timer == 0U)
+  {
+    /* General timer: channels share frequency but are not whole-timer
+     * exclusive; no arbitration at this layer (yet). */
+    st = 0;
+  }
+  else if ((s_tim_domains[(uint32_t)idx].active_owner != TARS_OWNER_NONE) &&
+           (s_tim_domains[(uint32_t)idx].active_owner != owner))
+  {
+    st = TARS_RES_ERR_ACTIVE;
+  }
+  else
+  {
+    s_tim_domains[(uint32_t)idx].active_owner = owner;
+  }
+
+  osMutexRelease(s_mutex);
+  return st;
+}
+
+void TarsResMgr_TimDomainRelease(const char *tim_id, tars_owner_t owner)
+{
+  int idx;
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return;
+  }
+
+  idx = tim_domain_find(tim_id);
+  if ((idx >= 0) && (s_tim_domains[(uint32_t)idx].active_owner == owner))
+  {
+    s_tim_domains[(uint32_t)idx].active_owner = TARS_OWNER_NONE;
+  }
+
+  osMutexRelease(s_mutex);
+}
+
+void TarsResMgr_TimDomainForceSet(const char *tim_id, tars_owner_t owner)
+{
+  int idx;
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return;
+  }
+
+  idx = tim_domain_find(tim_id);
+  if (idx >= 0)
+  {
+    s_tim_domains[(uint32_t)idx].active_owner = owner;
+  }
+
+  osMutexRelease(s_mutex);
+}
+
+tars_owner_t TarsResMgr_TimDomainActiveOwner(const char *tim_id)
+{
+  int idx;
+  tars_owner_t owner = TARS_OWNER_NONE;
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return TARS_OWNER_NONE;
+  }
+
+  idx = tim_domain_find(tim_id);
+  if (idx >= 0)
+  {
+    owner = s_tim_domains[(uint32_t)idx].active_owner;
+  }
+
+  osMutexRelease(s_mutex);
+  return owner;
+}
+
+tars_owner_t TarsResMgr_Tim1ActiveOwnerFast(void)
+{
+  if (s_tim1_domain_idx < 0)
+  {
+    /* No TIM1 domain on this board: default to FOC so its ISR is unaffected. */
+    return TARS_OWNER_FOC;
+  }
+
+  return s_tim_domains[(uint32_t)s_tim1_domain_idx].active_owner;
 }

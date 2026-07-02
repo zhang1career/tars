@@ -123,6 +123,31 @@ set_source_files_properties(${TARS_FOC_GEN_PARAMS} PROPERTIES GENERATED TRUE)
 add_custom_target(tars_foc_sync DEPENDS ${TARS_FOC_GEN_SRCS} ${TARS_FOC_GEN_PARAMS})
 add_dependencies(${CMAKE_PROJECT_NAME} tars_foc_sync)
 
+# Board config manifest: pinmap + FOC + probe + timer rules -> board.json
+set(TARS_CONFIG_GEN_DIR "${CMAKE_SOURCE_DIR}/generated/config")
+set(TARS_CONFIG_BOARD_JSON "${TARS_CONFIG_GEN_DIR}/board.json")
+
+add_custom_command(
+    OUTPUT ${TARS_CONFIG_BOARD_JSON}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TARS_CONFIG_GEN_DIR}
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/config/config-gen.py
+            ${TARS_PINMAP_CSV}
+            --foc-params ${TARS_FOC_GEN_PARAMS}
+            --probe-csv ${TARS_PROBE_CSV}
+            --tim-c ${CMAKE_SOURCE_DIR}/Core/Src/tim.c
+            -o ${TARS_CONFIG_BOARD_JSON}
+    DEPENDS ${TARS_PINMAP_CSV}
+            ${TARS_PROBE_CSV}
+            ${TARS_FOC_GEN_PARAMS}
+            ${CMAKE_SOURCE_DIR}/Core/Src/tim.c
+            ${CMAKE_SOURCE_DIR}/tools/config/config-gen.py
+    COMMENT "Generating board config board.json"
+    VERBATIM
+)
+
+add_custom_target(tars_config_gen DEPENDS ${TARS_CONFIG_BOARD_JSON})
+add_dependencies(tars_config_gen tars_foc_sync)
+
 # Treat the generated FOC tree as a system include so its (academic-license,
 # Embedded-Coder) headers don't trip the firmware's stricter warnings.
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${TARS_FOC_GEN_DIR})
@@ -147,6 +172,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_gpio.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pwm.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_shell.c
+    ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_spec.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pinmap.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_resource.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_gpio.c

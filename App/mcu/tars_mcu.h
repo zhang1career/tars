@@ -21,6 +21,8 @@ int TarsMcu_ProfileClear(void);
 int TarsMcu_ProfileFormatStored(char *out, uint32_t out_size);
 
 void TarsMcu_FormatInfo(char *out, uint32_t out_size);
+void TarsMcu_FormatSpecList(char *out, uint32_t out_size);
+int TarsMcu_FormatSpec(const char *id, char *out, uint32_t out_size);
 int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size);
 
 const char *TarsMcu_ResErrText(int code);
