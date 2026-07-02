@@ -330,6 +330,40 @@ int TarsResMgr_Grant(const char *id, tars_owner_t new_owner)
     }
   }
 
+  if ((st == 0) && (entry != NULL) && (entry->kind == TARS_RES_KIND_DAC))
+  {
+    const tars_mcu_dac_entry_t *dac = NULL;
+
+    if (TarsMcuPinmap_ResolveDac(id, &dac) == 0)
+    {
+      uint32_t pin_idx = 0U;
+
+      if (res_find_gpio_index_by_pin(dac->pin_name, &pin_idx) != 0)
+      {
+        if (TarsMcuPinmap_FindCatalog(dac->pin_name, NULL, &pin_idx) != 0)
+        {
+          st = TARS_RES_ERR_SCOPE;
+        }
+      }
+
+      if (st == 0)
+      {
+        if (s_slots[pin_idx].owner == TARS_OWNER_SYSTEM)
+        {
+          st = TARS_RES_ERR_SYSTEM;
+        }
+        else if (s_slots[pin_idx].active != TARS_OWNER_NONE)
+        {
+          st = TARS_RES_ERR_ACTIVE;
+        }
+        else
+        {
+          s_slots[pin_idx].owner = new_owner;
+        }
+      }
+    }
+  }
+
   osMutexRelease(s_mutex);
   return st;
 }
@@ -505,6 +539,88 @@ int TarsResMgr_ReleasePwm(const char *channel, tars_owner_t owner)
   return 0;
 }
 
+int TarsResMgr_AcquireDac(const char *channel, tars_owner_t owner)
+{
+  const tars_mcu_dac_entry_t *dac = NULL;
+  uint32_t dac_idx = 0U;
+  uint32_t pin_idx = 0U;
+  int st;
+
+  if (channel == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (TarsMcuPinmap_ResolveDac(channel, &dac) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (TarsMcuPinmap_FindCatalog(channel, NULL, &dac_idx) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (TarsMcuPinmap_FindCatalog(dac->pin_name, NULL, &pin_idx) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if ((s_slots[dac_idx].owner == owner) &&
+      (s_slots[pin_idx].active == TARS_OWNER_NONE) &&
+      (s_slots[pin_idx].owner != TARS_OWNER_SYSTEM))
+  {
+    s_slots[pin_idx].owner = owner;
+  }
+
+  st = res_acquire_pair_sorted(pin_idx, dac_idx, owner);
+
+  osMutexRelease(s_mutex);
+  return st;
+}
+
+int TarsResMgr_ReleaseDac(const char *channel, tars_owner_t owner)
+{
+  const tars_mcu_dac_entry_t *dac = NULL;
+  uint32_t dac_idx = 0U;
+  uint32_t pin_idx = 0U;
+
+  if (channel == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (TarsMcuPinmap_ResolveDac(channel, &dac) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (TarsMcuPinmap_FindCatalog(channel, NULL, &dac_idx) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (TarsMcuPinmap_FindCatalog(dac->pin_name, NULL, &pin_idx) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (osMutexWait(s_mutex, 100U) != osOK)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  (void)res_release_pair_sorted(pin_idx, dac_idx, owner);
+
+  osMutexRelease(s_mutex);
+  return 0;
+}
+
 int TarsResMgr_AcquireGpioPin(const char *pin_name, tars_owner_t owner)
 {
   uint32_t idx = 0U;
@@ -555,6 +671,19 @@ int TarsResMgr_ReleaseGpioPin(const char *pin_name, tars_owner_t owner)
   return st;
 }
 
+static const char *res_kind_text(tars_res_kind_t kind)
+{
+  if (kind == TARS_RES_KIND_PWM)
+  {
+    return "pwm";
+  }
+  if (kind == TARS_RES_KIND_DAC)
+  {
+    return "dac";
+  }
+  return "gpio";
+}
+
 void TarsResMgr_FormatList(char *out, uint32_t out_size)
 {
   uint32_t count = 0U;
@@ -571,7 +700,7 @@ void TarsResMgr_FormatList(char *out, uint32_t out_size)
   for (i = 0U; (i < count) && (i < s_slot_count); i++)
   {
     char line[96];
-    const char *kind = (cat[i].kind == TARS_RES_KIND_PWM) ? "pwm" : "gpio";
+    const char *kind = res_kind_text(cat[i].kind);
 
     (void)snprintf(line,
                    sizeof(line),
@@ -610,7 +739,7 @@ void TarsResMgr_FormatStatus(const char *id, char *out, uint32_t out_size)
                  out_size,
                  "res: id=%s kind=%s owner=%s active=%s lock=%u\r\n",
                  cat->id,
-                 (cat->kind == TARS_RES_KIND_PWM) ? "pwm" : "gpio",
+                 res_kind_text(cat->kind),
                  TarsOwner_ToString(s_slots[idx].owner),
                  TarsOwner_ToString(s_slots[idx].active),
                  (unsigned)cat->lock_order);

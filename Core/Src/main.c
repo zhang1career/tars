@@ -111,6 +111,7 @@ int main(void)
 #endif
   MX_TIM1_Init();
   MX_TIM9_Init();
+  MX_TIM10_Init();
   MX_ADC1_Init();
   /* USART1 (PA9/PA10) intentionally not initialized: those pins are reclaimed
    * for TIM1_CH2/CH3. The probe SCPI link runs on UART5 (PC12/PD2) instead. */

@@ -1,6 +1,7 @@
 #include "tars_resource.h"
 #include "tars_res_gpio.h"
 #include "tars_res_pwm.h"
+#include "tars_res_dac.h"
 #include "tars_res_mgr.h"
 #include "tars_res_profile.h"
 #include "tars_foc.h"
@@ -114,6 +115,16 @@ int TarsResource_ResGrant(const char *id, tars_owner_t owner)
 int TarsResource_PwmSetPersist(const char *channel, int boot_enable)
 {
   return TarsResPwm_SetPersist(channel, boot_enable);
+}
+
+int TarsResource_DacEnable(const char *channel, int enable)
+{
+  return TarsResDac_Enable(channel, enable);
+}
+
+int TarsResource_DacSetLevel(const char *channel, float level_pct)
+{
+  return TarsResDac_SetLevel(channel, level_pct);
 }
 
 int TarsResource_ProfileSave(void)

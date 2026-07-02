@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "tars_res_gpio.h"
 #include "tars_res_pwm.h"
+#include "tars_res_dac.h"
 #include "tars_res_mgr.h"
 
 #define TARS_RES_TICK_MS    5U
@@ -18,6 +19,9 @@ int TarsResource_PwmEnable(const char *channel, int enable);
 int TarsResource_PwmSetDuty(const char *channel, float duty_pct);
 int TarsResource_PwmSetFreq(const char *tim_id, uint32_t freq_hz);
 int TarsResource_PwmSetPersist(const char *channel, int boot_enable);
+
+int TarsResource_DacEnable(const char *channel, int enable);
+int TarsResource_DacSetLevel(const char *channel, float level_pct);
 
 int TarsResource_ResGrant(const char *id, tars_owner_t owner);
 

@@ -30,6 +30,9 @@ void TarsResMgr_FormatStatus(const char *id, char *out, uint32_t out_size);
 int TarsResMgr_AcquirePwm(const char *channel, tars_owner_t owner);
 int TarsResMgr_ReleasePwm(const char *channel, tars_owner_t owner);
 
+int TarsResMgr_AcquireDac(const char *channel, tars_owner_t owner);
+int TarsResMgr_ReleaseDac(const char *channel, tars_owner_t owner);
+
 /* GPIO output acquires the pin resource before driving. */
 int TarsResMgr_AcquireGpioPin(const char *pin_name, tars_owner_t owner);
 int TarsResMgr_ReleaseGpioPin(const char *pin_name, tars_owner_t owner);

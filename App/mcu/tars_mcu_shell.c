@@ -2,6 +2,7 @@
 #include "tars_mcu_pinmap.h"
 #include "tars_res_mgr.h"
 #include "tars_res_pwm.h"
+#include "tars_res_dac.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,10 +33,12 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  "  mcu pwm list|status [ch]|enable <ch> <0|1>\r\n"
                  "  mcu pwm duty <ch> <0-100>|freq <tim> <hz>\r\n"
                  "  mcu pwm persist <ch> <0|1>\r\n"
+                 "  mcu dac list|status [ch]|enable <ch> <0|1>\r\n"
+                 "  mcu dac value <ch> <0-100>\r\n"
                  "  mcu gpio write|read|list\r\n"
                  "  mcu pinmap\r\n"
                  "  mcu spec list|<id>\r\n"
-                 "  owners: none gpio pwm foc system\r\n");
+                 "  owners: none gpio pwm foc system dac\r\n");
 }
 
 static void mcu_shell_stub_status(const char *resource, char *out, uint32_t out_size)
@@ -455,6 +458,134 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
     return 1;
   }
 
+  if (mcu_str_eq(sub, "dac"))
+  {
+    char ch[24];
+    unsigned long val = 0UL;
+    unsigned long level_ul = 0UL;
+
+    if (mcu_str_eq(rest, "list"))
+    {
+      (void)snprintf(out, out_size, "mcu dac list (%s):\r\n", TarsMcuPinmap_BoardId());
+      TarsMcuPinmap_FormatDacList(out + strlen(out), out_size - (uint32_t)strlen(out));
+      return 1;
+    }
+
+    if ((rest[0] == '\0') || (mcu_str_eq(rest, "status")))
+    {
+      (void)snprintf(out, out_size, "mcu dac: use list|status <ch>|enable|value\r\n");
+      return 1;
+    }
+
+    if (strncmp(rest, "status ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s", ch) != 1)
+      {
+        (void)snprintf(out, out_size, "mcu dac status: use dac status <ch>\r\n");
+        return 1;
+      }
+      (void)TarsResDac_GetStatus(ch, out, out_size);
+      return 1;
+    }
+
+    if (strncmp(rest, "enable ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s %lu", ch, &val) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu dac enable: use enable <ch> <0|1>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsMcu_DacEnable(ch, (int)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu dac enable: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu dac enable: ch=%s val=%lu\r\n",
+                         ch,
+                         val);
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "value ", 6) == 0)
+    {
+      const char *args = rest + 6;
+      char *endptr = NULL;
+
+      if (sscanf(args, "%23s", ch) != 1)
+      {
+        (void)snprintf(out, out_size, "mcu dac value: use value <ch> <0-100>\r\n");
+        return 1;
+      }
+
+      args += strlen(ch);
+      while ((*args == ' ') || (*args == '\t'))
+      {
+        args++;
+      }
+
+      level_ul = strtoul(args, &endptr, 0);
+      if ((endptr == args) || (*endptr != '\0'))
+      {
+        (void)snprintf(out, out_size, "mcu dac value: use value <ch> <0-100>\r\n");
+        return 1;
+      }
+
+      if (level_ul > 100UL)
+      {
+        level_ul = 100UL;
+      }
+
+      {
+        int st = TarsMcu_DacSetLevel(ch, (float)level_ul);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu dac value: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          if (TarsResDac_IsRunning(ch) != 0)
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu dac value: ch=%s level=%lu\r\n",
+                           ch,
+                           level_ul);
+          }
+          else
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu dac value: ch=%s level=%lu (stored; use enable to drive)\r\n",
+                           ch,
+                           level_ul);
+          }
+        }
+      }
+      return 1;
+    }
+
+    (void)snprintf(out, out_size, "mcu dac: use list|status|enable|value\r\n");
+    return 1;
+  }
+
   if (mcu_str_eq(sub, "gpio"))
   {
     char pin_name[24];
@@ -534,7 +665,6 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
   if ((strcmp(sub, "tim") == 0) ||
       (strcmp(sub, "adc") == 0) ||
-      (strcmp(sub, "dac") == 0) ||
       (strcmp(sub, "can") == 0) ||
       (strcmp(sub, "uart") == 0))
   {

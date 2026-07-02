@@ -46,6 +46,8 @@ const char *TarsOwner_ToString(tars_owner_t owner)
     return "foc";
   case TARS_OWNER_SYSTEM:
     return "system";
+  case TARS_OWNER_DAC:
+    return "dac";
   default:
     return "?";
   }
@@ -77,6 +79,10 @@ int TarsOwner_Parse(const char *text, tars_owner_t *owner_out)
   else if (pinmap_stricmp(text, "system") == 0)
   {
     *owner_out = TARS_OWNER_SYSTEM;
+  }
+  else if (pinmap_stricmp(text, "dac") == 0)
+  {
+    *owner_out = TARS_OWNER_DAC;
   }
   else
   {
@@ -203,6 +209,29 @@ int TarsMcuPinmap_ResolvePwm(const char *name, const tars_mcu_pwm_entry_t **entr
   return -1;
 }
 
+int TarsMcuPinmap_ResolveDac(const char *name, const tars_mcu_dac_entry_t **entry_out)
+{
+  uint32_t count = 0U;
+  const tars_mcu_dac_entry_t *table = TarsMcuPinmap_GetDacTable(&count);
+  uint32_t i;
+
+  if ((name == NULL) || (entry_out == NULL))
+  {
+    return -1;
+  }
+
+  for (i = 0U; i < count; i++)
+  {
+    if (pinmap_match_name(table[i].channel, table[i].alias, name, '\0', -1))
+    {
+      *entry_out = &table[i];
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
 int TarsMcuPinmap_FindCatalog(const char *id, const tars_res_catalog_entry_t **entry_out,
                               uint32_t *index_out)
 {
@@ -295,6 +324,33 @@ void TarsMcuPinmap_FormatPwmList(char *out, uint32_t out_size)
                    "  %s -> %s pin=%s owner=%s\r\n",
                    table[i].channel,
                    (table[i].advanced_tim != 0U) ? "adv" : "pwm",
+                   table[i].pin_name,
+                   TarsOwner_ToString(TarsResMgr_GetOwner(table[i].channel)));
+    strncat(out, line, out_size - strlen(out) - 1U);
+  }
+}
+
+void TarsMcuPinmap_FormatDacList(char *out, uint32_t out_size)
+{
+  uint32_t count = 0U;
+  const tars_mcu_dac_entry_t *table = TarsMcuPinmap_GetDacTable(&count);
+  uint32_t i;
+
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  out[0] = '\0';
+
+  for (i = 0U; i < count; i++)
+  {
+    char line[112];
+
+    (void)snprintf(line,
+                   sizeof(line),
+                   "  %s -> pin=%s owner=%s\r\n",
+                   table[i].channel,
                    table[i].pin_name,
                    TarsOwner_ToString(TarsResMgr_GetOwner(table[i].channel)));
     strncat(out, line, out_size - strlen(out) - 1U);

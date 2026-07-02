@@ -171,6 +171,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/tars_api.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_gpio.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pwm.c
+    ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_dac.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_shell.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_spec.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pinmap.c
@@ -178,6 +179,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_gpio.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_mgr.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_pwm.c
+    ${CMAKE_SOURCE_DIR}/App/resource/tars_res_dac.c
     ${CMAKE_SOURCE_DIR}/App/resource/tars_res_profile.c
     ${CMAKE_SOURCE_DIR}/generated/fw/tars_fw_identity.c
     ${CMAKE_SOURCE_DIR}/App/probe/tars_probe.c
@@ -217,6 +219,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Core/Src/adc.c
     ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc.c
     ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_adc_ex.c
+    ${CMAKE_SOURCE_DIR}/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_dac.c
 )
 
 # User include paths (see note above — owned by this file, survives regen).

@@ -37,10 +37,20 @@
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim9;
+TIM_HandleTypeDef htim10;
+TIM_HandleTypeDef htim12;
 
 #define TARS_TIM9_PWM_HZ     1000U
 #define TARS_TIM9_CLK_HZ     72000000U
 #define TARS_TIM9_ARR        ((TARS_TIM9_CLK_HZ / TARS_TIM9_PWM_HZ) - 1U)
+
+#define TARS_TIM10_PWM_HZ    20000U
+#define TARS_TIM10_CLK_HZ    72000000U
+#define TARS_TIM10_ARR       ((TARS_TIM10_CLK_HZ / TARS_TIM10_PWM_HZ) - 1U)
+
+#define TARS_TIM12_PWM_HZ    20000U
+#define TARS_TIM12_CLK_HZ    72000000U
+#define TARS_TIM12_ARR       ((TARS_TIM12_CLK_HZ / TARS_TIM12_PWM_HZ) - 1U)
 
 /* TIM1 init function: advanced 6-PWM (CH1..3 + complementary), center-aligned,
  * dead-time, break input, TRGO=update to trigger ADC1 injected sampling. */
@@ -128,6 +138,36 @@ void MX_TIM9_Init(void)
   }
 }
 
+void MX_TIM10_Init(void)
+{
+  htim10.Instance = TIM10;
+  htim10.Init.Prescaler = 0;
+  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim10.Init.Period = TARS_TIM10_ARR;
+  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim10.Init.RepetitionCounter = 0;
+  htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim10) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void MX_TIM12_Init(void)
+{
+  htim12.Instance = TIM12;
+  htim12.Init.Prescaler = 0;
+  htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim12.Init.Period = TARS_TIM12_ARR;
+  htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim12.Init.RepetitionCounter = 0;
+  htim12.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim12) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
 void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -170,6 +210,16 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* tim_pwmHandle)
   {
     __HAL_RCC_TIM9_CLK_ENABLE();
     __HAL_RCC_GPIOE_CLK_ENABLE();
+  }
+  else if (tim_pwmHandle->Instance == TIM10)
+  {
+    __HAL_RCC_TIM10_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+  }
+  else if (tim_pwmHandle->Instance == TIM12)
+  {
+    __HAL_RCC_TIM12_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
   }
 }
 

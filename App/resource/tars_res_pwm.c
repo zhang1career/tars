@@ -63,7 +63,7 @@ static uint32_t pwm_tim_clk_hz(TIM_TypeDef *tim)
   uint32_t pclk;
   uint32_t ppre;
 
-  if ((tim == TIM1) || (tim == TIM9))
+  if ((tim == TIM1) || (tim == TIM9) || (tim == TIM10) || (tim == TIM12))
   {
     return 72000000U;
   }
@@ -238,6 +238,16 @@ static TIM_HandleTypeDef *pwm_tim_handle(const tars_mcu_pwm_entry_t *map)
     return &htim9;
   }
 
+  if (map->tim == TIM10)
+  {
+    return &htim10;
+  }
+
+  if (map->tim == TIM12)
+  {
+    return &htim12;
+  }
+
   {
     int slot = pwm_find_tim_slot(map->tim, 0);
     if (slot < 0)
@@ -308,6 +318,30 @@ static int pwm_init_tim_instance(const tars_mcu_pwm_entry_t *map, uint32_t freq_
     (void)pwm_apply_tim_timing(htim, freq_hz);
     return 0;
   }
+  else if (map->tim == TIM10)
+  {
+    htim = &htim10;
+    slot = pwm_find_tim_slot(TIM10, 1);
+    if (slot < 0)
+    {
+      return -1;
+    }
+    s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+    (void)pwm_apply_tim_timing(htim, freq_hz);
+    return 0;
+  }
+  else if (map->tim == TIM12)
+  {
+    htim = &htim12;
+    slot = pwm_find_tim_slot(TIM12, 1);
+    if (slot < 0)
+    {
+      return -1;
+    }
+    s_tim_pool[(uint32_t)slot].freq_hz = freq_hz;
+    (void)pwm_apply_tim_timing(htim, freq_hz);
+    return 0;
+  }
   else
   {
     tars_pwm_tim_t *rt;
@@ -361,6 +395,16 @@ static int pwm_config_pin_af(const tars_mcu_pwm_entry_t *map)
   return 0;
 }
 
+static uint32_t pwm_map_default_freq_hz(const tars_mcu_pwm_entry_t *map)
+{
+  if ((map != NULL) && (map->default_freq_hz != 0U))
+  {
+    return map->default_freq_hz;
+  }
+
+  return TARS_PWM_DEFAULT_HZ;
+}
+
 static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_pct)
 {
   TIM_HandleTypeDef *htim = pwm_tim_handle(map);
@@ -371,7 +415,7 @@ static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_p
 
   if (htim == NULL)
   {
-    if (pwm_init_tim_instance(map, TARS_PWM_DEFAULT_HZ) != 0)
+    if (pwm_init_tim_instance(map, pwm_map_default_freq_hz(map)) != 0)
     {
       return -1;
     }
@@ -512,6 +556,11 @@ int TarsResPwm_Enable(const char *channel, int enable)
   }
 
   ch->map = map;
+
+  if ((ch->duty_pct == 0U) && (map->default_duty_pct != 0U))
+  {
+    ch->duty_pct = map->default_duty_pct;
+  }
 
   if (pwm_configure_channel(map, ch->duty_pct) != 0)
   {

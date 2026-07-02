@@ -2,12 +2,14 @@
 #include "tars_mcu_pinmap.h"
 #include "tars_res_mgr.h"
 #include "tars_res_pwm.h"
+#include "tars_res_dac.h"
 #include "tim.h"
 #include "foc_params.h"
 #include <stdio.h>
 #include <string.h>
 
 #define TARS_TIM9_PWM_HZ 1000U
+#define TARS_TIM10_PWM_HZ 20000U
 
 static uint32_t spec_tim_design_freq_hz(const char *tim_id)
 {
@@ -18,6 +20,10 @@ static uint32_t spec_tim_design_freq_hz(const char *tim_id)
   if ((tim_id != NULL) && (strcmp(tim_id, "tim9") == 0))
   {
     return TARS_TIM9_PWM_HZ;
+  }
+  if ((tim_id != NULL) && (strcmp(tim_id, "tim10") == 0))
+  {
+    return TARS_TIM10_PWM_HZ;
   }
   return 1000U;
 }
@@ -114,7 +120,21 @@ void TarsMcu_FormatSpecList(char *out, uint32_t out_size)
     spec_append(out, out_size, line);
   }
 
-  spec_append(out, out_size, "\r\n  timers: tim1 tim9\r\n");
+  spec_append(out, out_size, "\r\n  timers: tim1 tim9 tim10\r\n");
+
+  {
+    uint32_t dac_count = 0U;
+    const tars_mcu_dac_entry_t *dac = TarsMcuPinmap_GetDacTable(&dac_count);
+
+    spec_append(out, out_size, "  dac:");
+    for (i = 0U; i < dac_count; i++)
+    {
+      char line[32];
+      (void)snprintf(line, sizeof(line), " %s", dac[i].channel);
+      spec_append(out, out_size, line);
+    }
+    spec_append(out, out_size, "\r\n");
+  }
 }
 
 static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
@@ -136,6 +156,10 @@ static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
 
   tim = map->tim;
   design_freq = spec_tim_design_freq_hz(map->tim_id);
+  if (map->default_freq_hz != 0U)
+  {
+    design_freq = map->default_freq_hz;
+  }
   runtime_freq = spec_runtime_tim_freq_hz(tim, map->tim_id);
   arr = (tim != NULL) ? tim->ARR : 0U;
   owner = TarsResMgr_GetOwner(map->channel);
@@ -160,7 +184,8 @@ static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
                  TarsOwner_ToString(map->default_owner),
                  (unsigned long)design_freq,
                  (strcmp(map->tim_id, "tim1") == 0) ? "FOC_PARAM_FPWM_HZ" :
-                 (strcmp(map->tim_id, "tim9") == 0) ? "TARS_TIM9_PWM_HZ" : "TARS_PWM_DEFAULT_HZ",
+                 (strcmp(map->tim_id, "tim9") == 0) ? "TARS_TIM9_PWM_HZ" :
+                 (map->default_freq_hz != 0U) ? "pinmap_default_freq_hz" : "TARS_PWM_DEFAULT_HZ",
                  spec_tim_shell_freq_mutable(map->tim_id),
                  spec_pwm_mode(map->tim_id),
                  TarsOwner_ToString(owner),
@@ -215,6 +240,33 @@ static int spec_format_gpio(const char *id, char *out, uint32_t out_size)
   return 0;
 }
 
+static int spec_format_dac(const char *id, char *out, uint32_t out_size)
+{
+  const tars_mcu_dac_entry_t *map = NULL;
+  float level = 0.0f;
+
+  if (TarsMcuPinmap_ResolveDac(id, &map) != 0)
+  {
+    return -1;
+  }
+
+  (void)TarsResDac_GetLevel(map->channel, &level);
+
+  (void)snprintf(out,
+                 out_size,
+                 "spec %s (dac):\r\n"
+                 "  design: pin=%s owner_default=%s vref=VDDA (~3.3V)\r\n"
+                 "  runtime: owner=%s active=%s level=%u%% run=%d\r\n",
+                 map->channel,
+                 map->pin_name ? map->pin_name : "?",
+                 TarsOwner_ToString(map->default_owner),
+                 TarsOwner_ToString(TarsResMgr_GetOwner(map->channel)),
+                 TarsOwner_ToString(TarsResMgr_GetActive(map->channel)),
+                 (unsigned)(level + 0.5f),
+                 TarsResDac_IsRunning(map->channel));
+  return 0;
+}
+
 static int spec_format_timer(const char *id, char *out, uint32_t out_size)
 {
   TIM_TypeDef *tim = NULL;
@@ -229,6 +281,23 @@ static int spec_format_timer(const char *id, char *out, uint32_t out_size)
   else if (strcmp(id, "tim9") == 0)
   {
     tim = TIM9;
+  }
+  else if (strcmp(id, "tim10") == 0)
+  {
+    design_freq = spec_tim_design_freq_hz(id);
+    runtime_freq = design_freq;
+    (void)TarsResPwm_GetTimFreq("tim10", &runtime_freq);
+
+    (void)snprintf(out,
+                   out_size,
+                   "spec %s (timer):\r\n"
+                   "  design: freq_hz=%lu pwm_mode=edge_aligned shell_freq_mutable=1 "
+                   "freq_source=pinmap_default_freq_hz\r\n"
+                   "  runtime: tim_freq_hz=%lu\r\n",
+                   id,
+                   (unsigned long)design_freq,
+                   (unsigned long)runtime_freq);
+    return 0;
   }
   else
   {
@@ -270,6 +339,10 @@ int TarsMcu_FormatSpec(const char *id, char *out, uint32_t out_size)
     return 0;
   }
   if (spec_format_gpio(id, out, out_size) == 0)
+  {
+    return 0;
+  }
+  if (spec_format_dac(id, out, out_size) == 0)
   {
     return 0;
   }
