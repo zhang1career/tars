@@ -119,6 +119,8 @@ def main() -> int:
     p.add_argument("--freq", type=int, help="set output frequency (Hz) after upload")
     p.add_argument("--grant", help="grant this tenant to the channel before enable")
     p.add_argument("--enable", action="store_true", help="enable output after upload")
+    p.add_argument("--link", action="store_true", help="enable dac0/dac1 AWG link before dac1 enable")
+    p.add_argument("--link-offset", type=int, default=0, help="link offset in sample points (default 0)")
     p.add_argument("-p", "--port", help="serial port (default: latest usbmodem)")
     p.add_argument("-b", "--baud", type=int, default=115200)
     args = p.parse_args()
@@ -155,6 +157,9 @@ def main() -> int:
             read_until(ser, ("tars>",), 3.0)
         if args.freq:
             ser.write(f"mcu awg freq {args.channel} {args.freq}\r\n".encode())
+            read_until(ser, ("tars>",), 3.0)
+        if args.link and args.channel == "dac1":
+            ser.write(f"mcu awg link 1 {args.link_offset}\r\n".encode())
             read_until(ser, ("tars>",), 3.0)
         if args.enable:
             ser.write(f"mcu awg enable {args.channel} 1\r\n".encode())

@@ -63,4 +63,12 @@ int TarsResAwg_Enable(const char *channel, int enable);
 int TarsResAwg_IsRunning(const char *channel);
 int TarsResAwg_GetStatus(const char *channel, char *out, uint32_t out_size);
 
+/* dac1 follows dac0: on enable/resync, rotate dac1's table so its output index
+ * tracks dac0 plus offset_samples (in sample points, mod dac1.points). */
+int TarsResAwg_LinkSet(int enable, int32_t offset_samples);
+int TarsResAwg_LinkEnable(int enable);
+int TarsResAwg_LinkSetOffset(int32_t offset_samples);
+int TarsResAwg_LinkResync(void);
+int TarsResAwg_LinkGetStatus(char *out, uint32_t out_size);
+
 #endif /* TARS_RES_AWG_H */

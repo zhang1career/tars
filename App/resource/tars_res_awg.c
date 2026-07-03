@@ -48,6 +48,13 @@ static uint8_t s_hw_init;
 static uint8_t s_tim_running;
 static awg_ch_t s_ch[2];
 
+static struct {
+  uint8_t  enabled;
+  int32_t  offset_samples;
+} s_link;
+
+#define AWG_CANON_MAX_POINTS  (TARS_AWG_CH_MAX_POINTS / 2U)
+
 static int awg_slot_for_channel(const char *channel)
 {
   if (channel == NULL)
@@ -89,6 +96,76 @@ static awg_ch_t *awg_ch_init_slot(int slot, const tars_mcu_dac_entry_t *map)
 static DMA_HandleTypeDef *awg_dma_for_slot(int slot)
 {
   return (slot == 0) ? &hdma_awg0 : &hdma_awg1;
+}
+
+static void awg_dac_clear_underrun(DAC_HandleTypeDef *hdac, uint32_t channel)
+{
+  if (channel == DAC_CHANNEL_1)
+  {
+    __HAL_DAC_CLEAR_FLAG(hdac, DAC_FLAG_DMAUDR1);
+    __HAL_DAC_DISABLE_IT(hdac, DAC_IT_DMAUDR1);
+  }
+  else
+  {
+    __HAL_DAC_CLEAR_FLAG(hdac, DAC_FLAG_DMAUDR2);
+    __HAL_DAC_DISABLE_IT(hdac, DAC_IT_DMAUDR2);
+  }
+}
+
+static void awg_dma_force_off(DMA_HandleTypeDef *hdma)
+{
+  uint32_t tick;
+
+  if (hdma->Instance == NULL)
+  {
+    return;
+  }
+
+  tick = HAL_GetTick();
+  __HAL_DMA_DISABLE(hdma);
+
+  while ((hdma->Instance->CR & DMA_SxCR_EN) != 0U)
+  {
+    if ((HAL_GetTick() - tick) > 10U)
+    {
+      hdma->Instance->CR = 0U;
+      hdma->Instance->NDTR = 0U;
+      hdma->Instance->M0AR = 0U;
+      hdma->State = HAL_DMA_STATE_RESET;
+      return;
+    }
+  }
+
+  if (hdma->State != HAL_DMA_STATE_RESET)
+  {
+    (void)HAL_DMA_DeInit(hdma);
+  }
+}
+
+static void awg_dma_irq_set(int slot, int enable)
+{
+  if (slot == 0)
+  {
+    if (enable != 0)
+    {
+      HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+    }
+    else
+    {
+      HAL_NVIC_DisableIRQ(DMA1_Stream5_IRQn);
+    }
+  }
+  else
+  {
+    if (enable != 0)
+    {
+      HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+    }
+    else
+    {
+      HAL_NVIC_DisableIRQ(DMA1_Stream6_IRQn);
+    }
+  }
 }
 
 static int awg_any_running(void)
@@ -163,7 +240,7 @@ static uint16_t awg_clamp12(float v)
   return (uint16_t)(v + 0.5f);
 }
 
-static void awg_fill_table(awg_ch_t *ch)
+static void awg_fill_table_dest(const awg_ch_t *ch, uint16_t *dest)
 {
   const float full = (float)TARS_DAC_MAX_VALUE;
   float center = (ch->offset_pct / 100.0f) * full;
@@ -215,10 +292,155 @@ static void awg_fill_table(awg_ch_t *ch)
       break;
     }
 
-    ch->buf[i] = awg_clamp12(v);
+    dest[i] = awg_clamp12(v);
+  }
+}
+
+static void awg_canon_snapshot(awg_ch_t *ch)
+{
+  if ((ch->points < 2U) || (ch->points > AWG_CANON_MAX_POINTS))
+  {
+    return;
   }
 
+  memcpy((void *)(ch->buf + ch->points),
+         (const void *)ch->buf,
+         ch->points * sizeof(uint16_t));
+}
+
+static void awg_fill_table(awg_ch_t *ch)
+{
+  awg_fill_table_dest(ch, ch->buf);
   ch->have_wave = 1U;
+  awg_canon_snapshot(ch);
+}
+
+static int32_t awg_link_norm_offset(int32_t off, uint32_t points)
+{
+  int32_t n;
+
+  if (points == 0U)
+  {
+    return 0;
+  }
+
+  n = (int32_t)points;
+  off %= n;
+  if (off < 0)
+  {
+    off += n;
+  }
+  return off;
+}
+
+static uint32_t awg_dma_next_index(const awg_ch_t *ch)
+{
+  int slot = (int)(ch - s_ch);
+  DMA_HandleTypeDef *hdma = awg_dma_for_slot(slot);
+  uint32_t ndtr;
+
+  if (ch->running == 0U)
+  {
+    return 0U;
+  }
+
+  ndtr = __HAL_DMA_GET_COUNTER(hdma);
+  if (ndtr == 0U)
+  {
+    return 0U;
+  }
+
+  return (ch->points - ndtr) % ch->points;
+}
+
+static void awg_rotate_table(awg_ch_t *ch, const uint16_t *canon, uint32_t rot)
+{
+  uint32_t n = ch->points;
+  uint32_t i;
+
+  for (i = 0U; i < n; i++)
+  {
+    ch->buf[i] = canon[(i + rot) % n];
+  }
+}
+
+static int awg_canon_into_scratch(awg_ch_t *ch, uint16_t **canon_out)
+{
+  uint16_t *scratch;
+
+  if (canon_out == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (ch->points < 2U)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (ch->points > AWG_CANON_MAX_POINTS)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  scratch = ch->buf + ch->points;
+
+  if (ch->wave == TARS_AWG_WAVE_NOISE)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (ch->wave == TARS_AWG_WAVE_CUSTOM)
+  {
+    *canon_out = scratch;
+    return 0;
+  }
+
+  awg_fill_table_dest(ch, scratch);
+  *canon_out = scratch;
+  return 0;
+}
+
+static int awg_link_align_follower(void)
+{
+  awg_ch_t *master = &s_ch[0];
+  awg_ch_t *follow = &s_ch[1];
+  uint16_t *canon;
+  uint32_t i0;
+  uint32_t rot;
+  int st;
+
+  if (s_link.enabled == 0U)
+  {
+    return 0;
+  }
+
+  if (master->running == 0U)
+  {
+    return TARS_RES_ERR_ACTIVE;
+  }
+
+  if (follow->have_wave == 0U)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (master->points != follow->points)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  st = awg_canon_into_scratch(follow, &canon);
+  if (st != 0)
+  {
+    return st;
+  }
+
+  i0 = awg_dma_next_index(master);
+  rot = (uint32_t)awg_link_norm_offset(s_link.offset_samples + (int32_t)i0,
+                                       follow->points);
+  awg_rotate_table(follow, canon, rot);
+  return 0;
 }
 
 static uint32_t awg_calc_timer(uint32_t sample_hz, uint16_t *psc_out, uint32_t *arr_out)
@@ -388,22 +610,62 @@ static void awg_tim_stop_if_idle(void)
   }
 }
 
-static int awg_ch_start(awg_ch_t *ch)
+static void awg_tim_hold(void)
 {
-  DAC_ChannelConfTypeDef cfg = {0};
-  DMA_HandleTypeDef *hdma;
-  int slot;
-  int st;
-
-  if (awg_hw_init() != 0)
+  if (s_tim_running != 0U)
   {
-    return TARS_RES_ERR_PARAM;
+    __HAL_TIM_DISABLE(&s_htim);
+  }
+}
+
+static void awg_tim_release(void)
+{
+  if (s_tim_running != 0U)
+  {
+    __HAL_TIM_ENABLE(&s_htim);
+  }
+}
+
+static void awg_ch_stop(awg_ch_t *ch)
+{
+  int slot = (int)(ch - s_ch);
+  DMA_HandleTypeDef *hdma;
+  uint32_t dmaen;
+
+  if (ch->running == 0U)
+  {
+    return;
   }
 
-  slot = (int)(ch - s_ch);
   hdma = awg_dma_for_slot(slot);
+  dmaen = (ch->map->hal_channel == DAC_CHANNEL_1) ? DAC_CR_DMAEN1 : DAC_CR_DMAEN2;
 
-  awg_config_pin_analog(ch->map);
+  awg_dma_irq_set(slot, 0);
+  CLEAR_BIT(s_hdac.Instance->CR, dmaen);
+  __HAL_DAC_DISABLE(&s_hdac, ch->map->hal_channel);
+  awg_dac_clear_underrun(&s_hdac, ch->map->hal_channel);
+  awg_dma_force_off(hdma);
+  s_hdac.State = HAL_DAC_STATE_READY;
+
+  ch->running = 0U;
+
+  if (awg_any_running() != 0)
+  {
+    (void)awg_tim_apply();
+  }
+  else
+  {
+    awg_tim_stop_if_idle();
+  }
+}
+
+static int awg_dma_setup(awg_ch_t *ch)
+{
+  DMA_HandleTypeDef *hdma;
+  int slot = (int)(ch - s_ch);
+
+  hdma = awg_dma_for_slot(slot);
+  awg_dma_force_off(hdma);
 
   hdma->Instance = ch->dma_stream;
   hdma->Init.Channel = ch->dma_channel;
@@ -423,22 +685,56 @@ static int awg_ch_start(awg_ch_t *ch)
   if (ch->map->hal_channel == DAC_CHANNEL_1)
   {
     __HAL_LINKDMA(&s_hdac, DMA_Handle1, hdma_awg0);
-    HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 6, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   }
   else
   {
     __HAL_LINKDMA(&s_hdac, DMA_Handle2, hdma_awg1);
+  }
+
+  awg_dma_irq_set(slot, 1);
+  if (slot == 0)
+  {
+    HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 6, 0);
+  }
+  else
+  {
     HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 6, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  }
+  return 0;
+}
+
+static int awg_ch_start(awg_ch_t *ch)
+{
+  DAC_ChannelConfTypeDef cfg = {0};
+  DMA_HandleTypeDef *hdma;
+  int slot;
+  int st;
+
+  if (awg_hw_init() != 0)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  slot = (int)(ch - s_ch);
+  hdma = awg_dma_for_slot(slot);
+
+  awg_config_pin_analog(ch->map);
+
+  st = awg_dma_setup(ch);
+  if (st != 0)
+  {
+    return st;
   }
 
   cfg.DAC_Trigger = DAC_TRIGGER_T7_TRGO;
   cfg.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&s_hdac, &cfg, ch->map->hal_channel) != HAL_OK)
   {
+    awg_dma_force_off(hdma);
     return TARS_RES_ERR_PARAM;
   }
+
+  awg_dac_clear_underrun(&s_hdac, ch->map->hal_channel);
 
   if (HAL_DAC_Start_DMA(&s_hdac,
                         ch->map->hal_channel,
@@ -446,51 +742,22 @@ static int awg_ch_start(awg_ch_t *ch)
                         ch->points,
                         DAC_ALIGN_12B_R) != HAL_OK)
   {
+    awg_dma_force_off(hdma);
     return TARS_RES_ERR_PARAM;
   }
 
   __HAL_DMA_DISABLE_IT(hdma, DMA_IT_HT | DMA_IT_TC);
-
-  if (ch->map->hal_channel == DAC_CHANNEL_1)
-  {
-    __HAL_DAC_DISABLE_IT(&s_hdac, DAC_IT_DMAUDR1);
-  }
-  else
-  {
-    __HAL_DAC_DISABLE_IT(&s_hdac, DAC_IT_DMAUDR2);
-  }
+  awg_dac_clear_underrun(&s_hdac, ch->map->hal_channel);
 
   ch->running = 1U;
   st = awg_tim_apply();
   if (st != 0)
   {
-    (void)HAL_DAC_Stop_DMA(&s_hdac, ch->map->hal_channel);
-    ch->running = 0U;
-    awg_tim_stop_if_idle();
+    awg_ch_stop(ch);
     return st;
   }
 
   return 0;
-}
-
-static void awg_ch_stop(awg_ch_t *ch)
-{
-  if (ch->running == 0U)
-  {
-    return;
-  }
-
-  (void)HAL_DAC_Stop_DMA(&s_hdac, ch->map->hal_channel);
-  ch->running = 0U;
-
-  if (awg_any_running() != 0)
-  {
-    (void)awg_tim_apply();
-  }
-  else
-  {
-    awg_tim_stop_if_idle();
-  }
 }
 
 int TarsResAwg_Generate(const char *channel,
@@ -614,7 +881,23 @@ int TarsResAwg_Enable(const char *channel, int enable)
     return st;
   }
 
+  if ((slot == 1) && (s_link.enabled != 0U))
+  {
+    awg_tim_hold();
+    st = awg_link_align_follower();
+    if (st != 0)
+    {
+      awg_tim_release();
+      (void)TarsResMgr_ReleaseDac(channel);
+      return st;
+    }
+  }
+
   st = awg_ch_start(ch);
+  if ((slot == 1) && (s_link.enabled != 0U))
+  {
+    awg_tim_release();
+  }
   if (st != 0)
   {
     (void)TarsResMgr_ReleaseDac(channel);
@@ -692,6 +975,7 @@ int TarsResAwg_UploadComplete(const char *channel)
 
   ch->wave = TARS_AWG_WAVE_CUSTOM;
   ch->have_wave = 1U;
+  awg_canon_snapshot(ch);
   return 0;
 }
 
@@ -742,5 +1026,131 @@ int TarsResAwg_GetStatus(const char *channel, char *out, uint32_t out_size)
                  (unsigned)(ch->ampl_pct + 0.5f),
                  (unsigned)(ch->offset_pct + 0.5f),
                  (unsigned)(ch->duty_pct + 0.5f));
+  return 0;
+}
+
+int TarsResAwg_LinkSet(int enable, int32_t offset_samples)
+{
+  s_link.enabled = (enable != 0) ? 1U : 0U;
+  s_link.offset_samples = offset_samples;
+  return 0;
+}
+
+int TarsResAwg_LinkEnable(int enable)
+{
+  s_link.enabled = (enable != 0) ? 1U : 0U;
+  return 0;
+}
+
+int TarsResAwg_LinkSetOffset(int32_t offset_samples)
+{
+  s_link.offset_samples = offset_samples;
+  return 0;
+}
+
+int TarsResAwg_LinkResync(void)
+{
+  awg_ch_t *follow = &s_ch[1];
+  uint8_t was_running = follow->running;
+  int st;
+
+  if (s_link.enabled == 0U)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (s_ch[0].running == 0U)
+  {
+    return TARS_RES_ERR_ACTIVE;
+  }
+
+  if (follow->running != 0U)
+  {
+    awg_tim_hold();
+    awg_ch_stop(follow);
+  }
+
+  if (follow->have_wave == 0U)
+  {
+    awg_tim_release();
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (TarsResMgr_TenantAssigned("dac1") == 0)
+  {
+    awg_tim_release();
+    return TARS_RES_ERR_OWNER;
+  }
+
+  if (was_running == 0U)
+  {
+    st = TarsResMgr_AcquireDac("dac1");
+    if (st != 0)
+    {
+      awg_tim_release();
+      return st;
+    }
+  }
+
+  st = awg_link_align_follower();
+  if (st != 0)
+  {
+    awg_tim_release();
+    if (was_running == 0U)
+    {
+      (void)TarsResMgr_ReleaseDac("dac1");
+    }
+    return st;
+  }
+
+  st = awg_ch_start(follow);
+  awg_tim_release();
+  if (st != 0)
+  {
+    if (was_running == 0U)
+    {
+      (void)TarsResMgr_ReleaseDac("dac1");
+    }
+    return st;
+  }
+
+  return 0;
+}
+
+int TarsResAwg_LinkGetStatus(char *out, uint32_t out_size)
+{
+  uint32_t idx0 = 0U;
+  uint32_t idx1 = 0U;
+  int32_t skew = 0;
+
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (s_ch[0].running != 0U)
+  {
+    idx0 = awg_dma_next_index(&s_ch[0]);
+  }
+  if (s_ch[1].running != 0U)
+  {
+    idx1 = awg_dma_next_index(&s_ch[1]);
+  }
+
+  if ((s_ch[0].running != 0U) && (s_ch[1].running != 0U) && (s_ch[1].points > 0U))
+  {
+    skew = awg_link_norm_offset((int32_t)idx0 - (int32_t)idx1, s_ch[1].points);
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "awg link: on=%u offset=%ld idx0=%lu idx1=%lu skew=%ld points0=%lu points1=%lu\r\n",
+                 (unsigned)s_link.enabled,
+                 (long)s_link.offset_samples,
+                 (unsigned long)idx0,
+                 (unsigned long)idx1,
+                 (long)skew,
+                 (unsigned long)s_ch[0].points,
+                 (unsigned long)s_ch[1].points);
   return 0;
 }

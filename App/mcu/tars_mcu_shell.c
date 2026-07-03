@@ -592,7 +592,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
     if ((rest[0] == '\0') || mcu_str_eq(rest, "status"))
     {
-      (void)snprintf(out, out_size, "mcu awg: use status <ch>|gen|freq|enable\r\n");
+      (void)snprintf(out, out_size, "mcu awg: use status <ch>|gen|freq|enable|link\r\n");
       return 1;
     }
 
@@ -683,6 +683,84 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
+    if (strncmp(rest, "link", 4) == 0 &&
+        ((rest[4] == '\0') || (rest[4] == ' ')))
+    {
+      const char *lp = rest + 4;
+
+      while (*lp == ' ')
+      {
+        lp++;
+      }
+
+      if (mcu_str_eq(lp, "status"))
+      {
+        (void)TarsResAwg_LinkGetStatus(out, out_size);
+        return 1;
+      }
+
+      if (mcu_str_eq(lp, "resync"))
+      {
+        int st = TarsResAwg_LinkResync();
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg link resync: err=%s\r\n",
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)TarsResAwg_LinkGetStatus(out, out_size);
+        }
+        return 1;
+      }
+
+      if (strncmp(lp, "offset ", 7) == 0)
+      {
+        long off = 0L;
+
+        if (sscanf(lp + 7, "%ld", &off) != 1)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg link offset: use link offset <samples>\r\n");
+          return 1;
+        }
+
+        (void)TarsResAwg_LinkSetOffset((int32_t)off);
+        (void)TarsResAwg_LinkGetStatus(out, out_size);
+        return 1;
+      }
+
+      {
+        long on = 0L;
+        long off = 0L;
+        int n = sscanf(lp, "%ld %ld", &on, &off);
+
+        if (n < 1)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg link: use link <0|1> [offset]|offset <samples>|resync|status\r\n");
+          return 1;
+        }
+
+        if (n >= 2)
+        {
+          (void)TarsResAwg_LinkSet((int)on, (int32_t)off);
+        }
+        else
+        {
+          (void)TarsResAwg_LinkEnable((int)on);
+        }
+
+        (void)TarsResAwg_LinkGetStatus(out, out_size);
+        return 1;
+      }
+    }
+
     if (strncmp(rest, "enable ", 7) == 0)
     {
       if (sscanf(rest + 7, "%23s %lu", ch, &val) != 2)
@@ -714,7 +792,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu awg: use status|gen|freq|enable\r\n");
+    (void)snprintf(out, out_size, "mcu awg: use status|gen|freq|enable|link\r\n");
     return 1;
   }
 
