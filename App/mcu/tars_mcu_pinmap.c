@@ -1,5 +1,6 @@
 #include "tars_mcu_pinmap.h"
 #include "tars_res_mgr.h"
+#include "tars_tenant.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,66 +31,6 @@ static int pinmap_stricmp(const char *a, const char *b)
       return 0;
     }
   }
-}
-
-const char *TarsOwner_ToString(tars_owner_t owner)
-{
-  switch (owner)
-  {
-  case TARS_OWNER_NONE:
-    return "none";
-  case TARS_OWNER_GPIO:
-    return "gpio";
-  case TARS_OWNER_PWM:
-    return "pwm";
-  case TARS_OWNER_FOC:
-    return "foc";
-  case TARS_OWNER_SYSTEM:
-    return "system";
-  case TARS_OWNER_DAC:
-    return "dac";
-  default:
-    return "?";
-  }
-}
-
-int TarsOwner_Parse(const char *text, tars_owner_t *owner_out)
-{
-  if ((text == NULL) || (owner_out == NULL))
-  {
-    return -1;
-  }
-
-  if (pinmap_stricmp(text, "none") == 0)
-  {
-    *owner_out = TARS_OWNER_NONE;
-  }
-  else if (pinmap_stricmp(text, "gpio") == 0)
-  {
-    *owner_out = TARS_OWNER_GPIO;
-  }
-  else if (pinmap_stricmp(text, "pwm") == 0)
-  {
-    *owner_out = TARS_OWNER_PWM;
-  }
-  else if (pinmap_stricmp(text, "foc") == 0)
-  {
-    *owner_out = TARS_OWNER_FOC;
-  }
-  else if (pinmap_stricmp(text, "system") == 0)
-  {
-    *owner_out = TARS_OWNER_SYSTEM;
-  }
-  else if (pinmap_stricmp(text, "dac") == 0)
-  {
-    *owner_out = TARS_OWNER_DAC;
-  }
-  else
-  {
-    return -1;
-  }
-
-  return 0;
 }
 
 static int pinmap_parse_pin_name(const char *name, char *bank_out, int *num_out)
@@ -279,23 +220,26 @@ void TarsMcuPinmap_FormatGpioList(char *out, uint32_t out_size)
   for (i = 0U; i < count; i++)
   {
     char line[96];
+    char tenant[TARS_TENANT_LEN];
+
+    (void)TarsResMgr_GetTenant(table[i].pin_name, tenant, sizeof(tenant));
 
     if (table[i].alias != NULL)
     {
       (void)snprintf(line,
                      sizeof(line),
-                     "  %s (%s) owner=%s\r\n",
+                     "  %s (%s) tenant=%s\r\n",
                      table[i].pin_name,
                      table[i].alias,
-                     TarsOwner_ToString(TarsResMgr_GetOwner(table[i].pin_name)));
+                     TarsTenant_Display(tenant));
     }
     else
     {
       (void)snprintf(line,
                      sizeof(line),
-                     "  %s owner=%s\r\n",
+                     "  %s tenant=%s\r\n",
                      table[i].pin_name,
-                     TarsOwner_ToString(TarsResMgr_GetOwner(table[i].pin_name)));
+                     TarsTenant_Display(tenant));
     }
 
     strncat(out, line, out_size - strlen(out) - 1U);
@@ -318,14 +262,17 @@ void TarsMcuPinmap_FormatPwmList(char *out, uint32_t out_size)
   for (i = 0U; i < count; i++)
   {
     char line[112];
+    char tenant[TARS_TENANT_LEN];
+
+    (void)TarsResMgr_GetTenant(table[i].channel, tenant, sizeof(tenant));
 
     (void)snprintf(line,
                    sizeof(line),
-                   "  %s -> %s pin=%s owner=%s\r\n",
+                   "  %s -> %s pin=%s tenant=%s\r\n",
                    table[i].channel,
                    (table[i].advanced_tim != 0U) ? "adv" : "pwm",
                    table[i].pin_name,
-                   TarsOwner_ToString(TarsResMgr_GetOwner(table[i].channel)));
+                   TarsTenant_Display(tenant));
     strncat(out, line, out_size - strlen(out) - 1U);
   }
 }
@@ -346,13 +293,16 @@ void TarsMcuPinmap_FormatDacList(char *out, uint32_t out_size)
   for (i = 0U; i < count; i++)
   {
     char line[112];
+    char tenant[TARS_TENANT_LEN];
+
+    (void)TarsResMgr_GetTenant(table[i].channel, tenant, sizeof(tenant));
 
     (void)snprintf(line,
                    sizeof(line),
-                   "  %s -> pin=%s owner=%s\r\n",
+                   "  %s -> pin=%s tenant=%s\r\n",
                    table[i].channel,
                    table[i].pin_name,
-                   TarsOwner_ToString(TarsResMgr_GetOwner(table[i].channel)));
+                   TarsTenant_Display(tenant));
     strncat(out, line, out_size - strlen(out) - 1U);
   }
 }

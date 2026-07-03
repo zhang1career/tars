@@ -42,8 +42,8 @@ JSON example:
 {
   "board": "stm32f429i-disc1",
   "grants": [
-    {"id": "pwm0", "owner": 2},
-    {"id": "pa8", "owner": 2}
+    {"id": "pwm0", "tenant": "gate_driver"},
+    {"id": "pa8", "tenant": "gate_driver"}
   ],
   "pwm": [
     {"channel": "pwm0", "duty": 50, "boot_enable": 1}
@@ -54,7 +54,8 @@ JSON example:
 }
 ```
 
-Owner codes: `0=none`, `1=gpio`, `2=pwm`, `3=foc`, `4=system`.
+Profile format version **3**: grants store `tenant` strings (max 15 chars).
+Version 2 profiles (numeric owner codes) are rejected on load.
 
 ## Lua (API v2)
 

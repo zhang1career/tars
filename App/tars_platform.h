@@ -66,6 +66,15 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 #define TARS_PROBE_CAP_BASE       0xD0100000UL
 #define TARS_PROBE_CAP_SIZE       (256U * 1024U)
 
+/* --- Arbitrary waveform generator sample tables (external SDRAM) ---
+ * Per-channel uint16 sample buffers driven out of the DAC by TIM7-triggered
+ * circular DMA. Two channels (dac0/dac1) each get a fixed-stride region so a
+ * future two-channel XY mode can point both DMAs at contiguous tables. */
+#define TARS_AWG_WAVE_BASE        0xD0140000UL
+#define TARS_AWG_CH_MAX_POINTS    8192U
+#define TARS_AWG_CH_STRIDE        (TARS_AWG_CH_MAX_POINTS * 2U)
+#define TARS_AWG_WAVE_SIZE        (2U * TARS_AWG_CH_STRIDE)
+
 /* --- Scheduler --- */
 #define TARS_SCHED_SLICE_COUNT    8U
 #define TARS_SCHED_SLICE_MS       100U

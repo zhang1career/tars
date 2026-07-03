@@ -43,9 +43,9 @@ int TarsMcu_PwmSetFreq(const char *tim_id, uint32_t freq_hz)
   return TarsResource_PwmSetFreq(tim_id, freq_hz);
 }
 
-int TarsMcu_ResGrant(const char *id, tars_owner_t owner)
+int TarsMcu_ResGrant(const char *id, const char *tenant)
 {
-  return TarsResource_ResGrant(id, owner);
+  return TarsResource_ResGrant(id, tenant);
 }
 
 int TarsMcu_PwmSetPersist(const char *channel, int boot_enable)

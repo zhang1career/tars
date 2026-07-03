@@ -9,11 +9,11 @@ uart5_tx,pc12
 uart5_rx,pd2
 
 # PWM channels: any valid TIM+pin+AF the developer lists is accepted.
-# default_owner: none|gpio|pwm|foc|system — runtime ownership mutable via
-# `mcu res grant` when the resource is not active.
+# default_tenant: none|foc|system — boot default; runtime grant via
+# `mcu res grant <id> <tenant>` when idle.
 [pwm]
 # Optional trailing columns: default_freq_hz, default_duty_pct
-channel,tim,chan,pin,af,default_owner,alias,default_freq_hz,default_duty_pct
+channel,tim,chan,pin,af,default_tenant,alias,default_freq_hz,default_duty_pct
 pwm0,tim1,1,pa8,AF1,none,,,
 pwm1,tim9,2,pe4,AF3,none,,,
 pwm2,tim9,2,pe6,AF3,none,,,
@@ -25,25 +25,25 @@ tim1_ch3,tim1,3,pa10,AF1,foc,,,
 
 # DAC channels (STM32F429: PA4=DAC_OUT1, PA5=DAC_OUT2).
 [dac]
-channel,pin,hal_chan,default_owner,alias
+channel,pin,hal_chan,default_tenant,alias
 dac0,pa4,1,none,
 dac1,pa5,2,none,
 
-# GPIO pins exposed to shell/API (pin, alias, default_owner).
+# GPIO pins exposed to shell/API (pin, alias, default_tenant).
 [gpio]
-pin,alias,default_owner
-pg13,ld3,gpio
-pg14,ld4,gpio
-pe2,,gpio
-pe3,,gpio
-pe4,,gpio
-pe5,,gpio
-pe6,,gpio
-pd4,,gpio
-pd5,,gpio
-pd7,,gpio
-pa0,b1,gpio
-pa8,,gpio
-pb8,,gpio
-pa4,,gpio
-pa5,,gpio
+pin,alias,default_tenant
+pg13,ld3,none
+pg14,ld4,none
+pe2,,none
+pe3,,none
+pe4,,none
+pe5,,none
+pe6,,none
+pd4,,none
+pd5,,none
+pd7,,none
+pa0,b1,none
+pa8,,none
+pb8,,none
+pa4,,none
+pa5,,none

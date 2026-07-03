@@ -5,15 +5,6 @@
 #include "stm32f4xx_hal.h"
 
 typedef enum {
-  TARS_OWNER_NONE = 0,
-  TARS_OWNER_GPIO,
-  TARS_OWNER_PWM,
-  TARS_OWNER_FOC,
-  TARS_OWNER_SYSTEM,
-  TARS_OWNER_DAC
-} tars_owner_t;
-
-typedef enum {
   TARS_RES_KIND_GPIO = 0,
   TARS_RES_KIND_PWM  = 1,
   TARS_RES_KIND_DAC  = 2
@@ -24,7 +15,7 @@ typedef struct {
   const char *alias;
   GPIO_TypeDef *port;
   uint16_t hal_pin;
-  tars_owner_t default_owner;
+  const char *default_tenant;
 } tars_mcu_gpio_entry_t;
 
 typedef struct {
@@ -36,7 +27,7 @@ typedef struct {
   GPIO_TypeDef *port;
   uint16_t hal_pin;
   uint32_t gpio_af;
-  tars_owner_t default_owner;
+  const char *default_tenant;
   uint8_t advanced_tim;
   const char *pin_name;
   uint32_t default_freq_hz;
@@ -50,14 +41,14 @@ typedef struct {
   GPIO_TypeDef *port;
   uint16_t hal_pin;
   const char *pin_name;
-  tars_owner_t default_owner;
+  const char *default_tenant;
 } tars_mcu_dac_entry_t;
 
 typedef struct {
   const char *id;
   tars_res_kind_t kind;
   uint16_t lock_order;
-  tars_owner_t default_owner;
+  const char *default_tenant;
   int16_t linked_pwm_idx;
   int16_t table_idx;
 } tars_res_catalog_entry_t;
@@ -87,8 +78,5 @@ void TarsMcuPinmap_FormatGpioList(char *out, uint32_t out_size);
 void TarsMcuPinmap_FormatPwmList(char *out, uint32_t out_size);
 void TarsMcuPinmap_FormatDacList(char *out, uint32_t out_size);
 void TarsMcuPinmap_FormatPeriphMap(char *out, uint32_t out_size);
-
-const char *TarsOwner_ToString(tars_owner_t owner);
-int TarsOwner_Parse(const char *text, tars_owner_t *owner_out);
 
 #endif /* TARS_MCU_PINMAP_H */

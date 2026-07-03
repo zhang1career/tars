@@ -99,12 +99,12 @@ int TarsResGpio_Write(const char *pin_name, int value)
     return TARS_RES_ERR_SCOPE;
   }
 
-  if (TarsResMgr_GetOwner(entry->pin_name) != TARS_OWNER_GPIO)
+  if (TarsResMgr_TenantAssigned(entry->pin_name) == 0)
   {
     return TARS_RES_ERR_OWNER;
   }
 
-  st = TarsResMgr_AcquireGpioPin(entry->pin_name, TARS_OWNER_GPIO);
+  st = TarsResMgr_AcquireGpioPin(entry->pin_name);
   if (st != 0)
   {
     return st;
@@ -113,7 +113,7 @@ int TarsResGpio_Write(const char *pin_name, int value)
   gpio_ensure_output(port, pin);
   HAL_GPIO_WritePin(port, pin, (value != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-  (void)TarsResMgr_ReleaseGpioPin(entry->pin_name, TARS_OWNER_GPIO);
+  (void)TarsResMgr_ReleaseGpioPin(entry->pin_name);
   return 0;
 }
 

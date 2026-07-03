@@ -2,6 +2,7 @@
 #include "tars_res_mgr.h"
 #include "tars_res_pwm.h"
 #include "tars_mcu_pinmap.h"
+#include "tars_tenant.h"
 #include "tars_fw_identity.h"
 #include "tars_lfs.h"
 #include "tars_platform.h"
@@ -12,7 +13,7 @@
 #include <string.h>
 
 #define TARS_RES_PROFILE_MAGIC      0x54525350UL  /* 'TRSP' */
-#define TARS_RES_PROFILE_VERSION    2U
+#define TARS_RES_PROFILE_VERSION    3U
 #define TARS_RES_PROFILE_MAX_GRANTS 32U
 #define TARS_RES_PROFILE_MAX_PWM    16U
 #define TARS_RES_PROFILE_MAX_TIM    4U
@@ -23,8 +24,7 @@
 
 typedef struct __attribute__((packed)) {
   char     id[TARS_RES_PROFILE_ID_LEN];
-  uint8_t  owner;
-  uint8_t  reserved[3];
+  char     tenant[TARS_TENANT_LEN];
 } tars_prof_grant_t;
 
 typedef struct __attribute__((packed)) {
@@ -161,9 +161,20 @@ static int profile_board_matches(const tars_prof_hdr_t *hdr)
   return (strncmp(hdr->board_id, TarsMcuPinmap_BoardId(), TARS_BOARD_ID_STORE_LEN) == 0) ? 1 : 0;
 }
 
-static tars_owner_t profile_catalog_default_owner(const tars_res_catalog_entry_t *cat)
+static int profile_tenant_same(const char *a, const char *b)
 {
-  return cat->default_owner;
+  char ta[TARS_TENANT_LEN];
+  char tb[TARS_TENANT_LEN];
+
+  TarsTenant_Copy(ta, sizeof(ta), a);
+  TarsTenant_Copy(tb, sizeof(tb), b);
+  return (strcmp(ta, tb) == 0) ? 1 : 0;
+}
+
+static int profile_tenant_differs_from_default(const tars_res_catalog_entry_t *cat,
+                                               const char *runtime)
+{
+  return (profile_tenant_same(cat->default_tenant, runtime) == 0) ? 1 : 0;
 }
 
 static int profile_collect_grants(tars_prof_grant_t *out, uint32_t *count_out)
@@ -175,23 +186,24 @@ static int profile_collect_grants(tars_prof_grant_t *out, uint32_t *count_out)
 
   for (i = 0U; i < cat_count; i++)
   {
-    tars_owner_t runtime;
-    tars_owner_t def;
+    char runtime[TARS_TENANT_LEN];
 
     if (cat[i].id == NULL)
     {
       continue;
     }
 
-    def = profile_catalog_default_owner(&cat[i]);
-    runtime = TarsResMgr_GetOwner(cat[i].id);
-
-    if (runtime == def)
+    if (TarsResMgr_GetTenant(cat[i].id, runtime, sizeof(runtime)) != 0)
     {
       continue;
     }
 
-    if (runtime == TARS_OWNER_SYSTEM)
+    if (TarsTenant_IsSystem(runtime) != 0)
+    {
+      continue;
+    }
+
+    if (profile_tenant_differs_from_default(&cat[i], runtime) == 0)
     {
       continue;
     }
@@ -203,8 +215,7 @@ static int profile_collect_grants(tars_prof_grant_t *out, uint32_t *count_out)
 
     memset(out[n].id, 0, sizeof(out[n].id));
     strncpy(out[n].id, cat[i].id, TARS_RES_PROFILE_ID_LEN - 1U);
-    out[n].owner = (uint8_t)runtime;
-    out[n].reserved[0] = 0U;
+    TarsTenant_Copy(out[n].tenant, sizeof(out[n].tenant), runtime);
     n++;
   }
 
@@ -567,14 +578,7 @@ int TarsResProfile_Apply(void)
 
   for (i = 0U; i < s_staged.hdr.grant_count; i++)
   {
-    tars_owner_t owner = (tars_owner_t)s_staged.grants[i].owner;
-
-    if (owner > TARS_OWNER_SYSTEM)
-    {
-      continue;
-    }
-
-    (void)TarsResMgr_Grant(s_staged.grants[i].id, owner);
+    (void)TarsResMgr_Grant(s_staged.grants[i].id, s_staged.grants[i].tenant);
   }
 
   for (i = 0U; i < s_staged.hdr.tim_count; i++)
@@ -728,7 +732,7 @@ int TarsResProfile_FormatStored(char *out, uint32_t out_size)
                    out_size - (uint32_t)written,
                    "  grant %s -> %s\r\n",
                    s_staged.grants[i].id,
-                   TarsOwner_ToString((tars_owner_t)s_staged.grants[i].owner));
+                   TarsTenant_Display(s_staged.grants[i].tenant));
   }
 
   for (i = 0U; i < s_staged.hdr.pwm_count; i++)

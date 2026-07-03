@@ -17,7 +17,7 @@ from pathlib import Path
 class GpioRow:
     pin: str
     alias: str = ""
-    default_owner: str = "gpio"
+    default_tenant: str = "none"
 
 
 @dataclass
@@ -27,7 +27,7 @@ class PwmRow:
     chan: int
     pin: str
     af: str
-    default_owner: str = "none"
+    default_tenant: str = "none"
     alias: str = ""
 
 
@@ -82,7 +82,7 @@ def load_pinmap_csv(path: Path) -> PinMap:
                 GpioRow(
                     pin=row[0].strip(),
                     alias=row[1].strip() if len(row) > 1 else "",
-                    default_owner=row[2].strip() if len(row) > 2 else "gpio",
+                    default_tenant=row[2].strip() if len(row) > 2 else "none",
                 )
             )
         elif section == "pwm":
@@ -96,7 +96,7 @@ def load_pinmap_csv(path: Path) -> PinMap:
                         chan=int(row[2].strip()),
                         pin=row[3].strip().lower(),
                         af=row[4].strip(),
-                        default_owner=row[5].strip() or "none",
+                        default_tenant=row[5].strip() or "none",
                         alias=row[6].strip() if len(row) > 6 else "",
                     )
                 )
@@ -212,7 +212,7 @@ def build_board_json(
             "chan": row.chan,
             "pin": row.pin,
             "af": row.af,
-            "default_owner": row.default_owner,
+            "default_tenant": row.default_tenant,
             "freq_hz": freq_hz,
             "freq_source": tim_meta.get("freq_source", ""),
             "shell_freq_mutable": tim_meta.get("shell_freq_mutable", True),
@@ -225,7 +225,7 @@ def build_board_json(
     gpio_out = {
         row.pin: {
             "alias": row.alias,
-            "default_owner": row.default_owner,
+            "default_tenant": row.default_tenant,
         }
         for row in pinmap.gpio
     }

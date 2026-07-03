@@ -107,9 +107,9 @@ int TarsResource_PwmSetFreq(const char *tim_id, uint32_t freq_hz)
   return TarsResPwm_SetFreq(tim_id, freq_hz);
 }
 
-int TarsResource_ResGrant(const char *id, tars_owner_t owner)
+int TarsResource_ResGrant(const char *id, const char *tenant)
 {
-  return TarsResMgr_Grant(id, owner);
+  return TarsResMgr_Grant(id, tenant);
 }
 
 int TarsResource_PwmSetPersist(const char *channel, int boot_enable)

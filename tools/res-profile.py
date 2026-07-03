@@ -18,14 +18,15 @@ _spec.loader.exec_module(_mod)
 tars_crc32 = _mod.tars_crc32
 
 TRSP_MAGIC = 0x54525350
-TRSP_VERSION = 2
+TRSP_VERSION = 3
 TFWK_MAGIC = 0x5446574B
 BOARD_ID_LEN = 24
 ID_LEN = 16
+TENANT_LEN = 16
 TIM_LEN = 8
 
 HDR_FMT = "<IHH24sIIIIII"
-GRANT_FMT = "<16s4s"
+GRANT_FMT = f"<{ID_LEN}s{TENANT_LEN}s"
 PWM_FMT = "<16s4s"
 TIM_FMT = "<8sI"
 
@@ -61,7 +62,14 @@ def pack_profile(doc: dict, fw_crc32: int, fw_size: int) -> bytes:
 
     body = b""
     for g in grants:
-        body += struct.pack(GRANT_FMT, g["id"].encode(), bytes([g["owner"], 0, 0, 0]))
+        tenant = g.get("tenant", g.get("owner", "none"))
+        if isinstance(tenant, int):
+            tenant = ["none", "gpio", "pwm", "foc", "system"][tenant] if tenant < 5 else str(tenant)
+        body += struct.pack(
+            GRANT_FMT,
+            g["id"].encode(),
+            tenant.encode()[: TENANT_LEN - 1],
+        )
     for p in pwm:
         body += struct.pack(
             PWM_FMT,
@@ -105,8 +113,13 @@ def unpack_profile(data: bytes) -> dict:
     for _ in range(ng):
         chunk = data[offset : offset + struct.calcsize(GRANT_FMT)]
         offset += struct.calcsize(GRANT_FMT)
-        gid, own = struct.unpack(GRANT_FMT, chunk)
-        grants.append({"id": gid.split(b"\0", 1)[0].decode(), "owner": own[0]})
+        gid, tenant_raw = struct.unpack(GRANT_FMT, chunk)
+        grants.append(
+            {
+                "id": gid.split(b"\0", 1)[0].decode(),
+                "tenant": tenant_raw.split(b"\0", 1)[0].decode() or "none",
+            }
+        )
 
     pwm = []
     for _ in range(np):
@@ -143,10 +156,6 @@ def unpack_profile(data: bytes) -> dict:
     }
 
 
-def owner_name(code: int) -> str:
-    return ["none", "gpio", "pwm", "foc", "system"][code] if code < 5 else str(code)
-
-
 def cmd_pack(args: argparse.Namespace) -> int:
     doc = json.loads(args.json.read_text())
     if args.elf:
@@ -175,7 +184,7 @@ def cmd_dump(args: argparse.Namespace) -> int:
     doc = unpack_profile(args.profile.read_bytes())
     print(f"board={doc['board']} fw_crc=0x{doc['fw_crc32']:08X} fw_size={doc['fw_image_size']}")
     for g in doc["grants"]:
-        print(f"  grant {g['id']} -> {owner_name(g['owner'])}")
+        print(f"  grant {g['id']} -> {g['tenant']}")
     for p in doc["pwm"]:
         print(f"  pwm {p['channel']} duty={p['duty']} boot={p['boot_enable']}")
     for t in doc["tim"]:

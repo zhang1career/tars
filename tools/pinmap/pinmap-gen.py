@@ -11,12 +11,9 @@ from io import StringIO
 from pathlib import Path
 
 OWNER_MAP = {
-    "none": "TARS_OWNER_NONE",
-    "gpio": "TARS_OWNER_GPIO",
-    "pwm": "TARS_OWNER_PWM",
-    "foc": "TARS_OWNER_FOC",
-    "system": "TARS_OWNER_SYSTEM",
-    "dac": "TARS_OWNER_DAC",
+    "none": "none",
+    "foc": "foc",
+    "system": "system",
 }
 
 TIM_INSTANCE = {
@@ -39,7 +36,7 @@ TIM_INSTANCE = {
 class GpioRow:
     pin: str
     alias: str = ""
-    default_owner: str = "gpio"
+    default_tenant: str = "none"
 
 
 @dataclass
@@ -49,7 +46,7 @@ class PwmRow:
     chan: int
     pin: str
     af: str
-    default_owner: str = "none"
+    default_tenant: str = "none"
     alias: str = ""
     default_freq_hz: int = 0
     default_duty_pct: int = 0
@@ -60,7 +57,7 @@ class DacRow:
     channel: str
     pin: str
     hal_chan: int
-    default_owner: str = "none"
+    default_tenant: str = "none"
     alias: str = ""
 
 
@@ -92,10 +89,10 @@ def pin_to_hal(pin_name: str) -> tuple[str, str]:
     return f"GPIO{bank.upper()}", f"GPIO_PIN_{num}"
 
 
-def parse_owner(value: str) -> str:
+def parse_default_tenant(value: str) -> str:
     key = value.strip().lower() or "none"
     if key not in OWNER_MAP:
-        raise ValueError(f"unknown owner {value!r}; use none|gpio|pwm|foc|system")
+        raise ValueError(f"unknown default_tenant {value!r}; use none|foc|system")
     return OWNER_MAP[key]
 
 
@@ -169,8 +166,8 @@ def load_csv(path: Path) -> PinMap:
                 continue
             pin = row[0].strip()
             alias = row[1].strip() if len(row) > 1 else ""
-            owner = row[2].strip() if len(row) > 2 else "gpio"
-            pm.gpio.append(GpioRow(pin=pin, alias=alias, default_owner=owner))
+            owner = row[2].strip() if len(row) > 2 else "none"
+            pm.gpio.append(GpioRow(pin=pin, alias=alias, default_tenant=owner))
         elif section == "pwm":
             if row[0].lower() in {"channel", "name"}:
                 continue
@@ -183,7 +180,7 @@ def load_csv(path: Path) -> PinMap:
                     chan=int(row[2].strip()),
                     pin=row[3].strip(),
                     af=row[4].strip(),
-                    default_owner=row[5].strip() if len(row) > 5 else "none",
+                    default_tenant=row[5].strip() if len(row) > 5 else "none",
                     alias=row[6].strip() if len(row) > 6 else "",
                     default_freq_hz=int(row[7].strip()) if len(row) > 7 and row[7].strip() else 0,
                     default_duty_pct=int(row[8].strip()) if len(row) > 8 and row[8].strip() else 0,
@@ -199,7 +196,7 @@ def load_csv(path: Path) -> PinMap:
                     channel=row[0].strip(),
                     pin=row[1].strip(),
                     hal_chan=int(row[2].strip()),
-                    default_owner=row[3].strip() if len(row) > 3 else "none",
+                    default_tenant=row[3].strip() if len(row) > 3 else "none",
                     alias=row[4].strip() if len(row) > 4 else "",
                 )
             )
@@ -226,34 +223,34 @@ def render_c(pm: PinMap, source: Path) -> str:
     gpio_rows: list[str] = []
     for row in pm.gpio:
         port, hal_pin = pin_to_hal(row.pin)
-        owner = parse_owner(row.default_owner)
+        owner = parse_default_tenant(row.default_tenant)
         gpio_rows.append(
             f"  {{ {c_string(row.pin)}, {c_string(row.alias or None)}, "
-            f"{port}, {hal_pin}, {owner} }},"
+            f"{port}, {hal_pin}, {c_string(owner)} }},"
         )
 
     pwm_rows: list[str] = []
     for row in pm.pwm:
         port, hal_pin = pin_to_hal(row.pin)
-        owner = parse_owner(row.default_owner)
+        owner = parse_default_tenant(row.default_tenant)
         tim_inst = tim_const(row.tim)
         advanced = "1U" if row.tim.lower() == "tim1" else "0U"
         pwm_rows.append(
             f"  {{ {c_string(row.channel)}, {c_string(row.alias or None)}, "
             f"{tim_inst}, {c_string(row.tim.lower())}, {hal_channel(row.chan)}, "
             f"{port}, {hal_pin}, {af_const(row.tim, row.af)}, "
-            f"{owner}, {advanced}, {c_string(row.pin)}, "
+            f"{c_string(owner)}, {advanced}, {c_string(row.pin)}, "
             f"{row.default_freq_hz}U, {row.default_duty_pct}U }},"
         )
 
     dac_rows: list[str] = []
     for row in pm.dac:
         port, hal_pin = pin_to_hal(row.pin)
-        owner = parse_owner(row.default_owner)
+        owner = parse_default_tenant(row.default_tenant)
         dac_rows.append(
             f"  {{ {c_string(row.channel)}, {c_string(row.alias or None)}, "
             f"{hal_dac_channel(row.hal_chan)}, {port}, {hal_pin}, "
-            f"{c_string(row.pin)}, {owner} }},"
+            f"{c_string(row.pin)}, {c_string(owner)} }},"
         )
 
     catalog_rows: list[str] = []
@@ -261,21 +258,21 @@ def render_c(pm: PinMap, source: Path) -> str:
     for i, row in enumerate(pm.gpio):
         catalog_rows.append(
             f"  {{ {c_string(row.pin)}, TARS_RES_KIND_GPIO, {order}U, "
-            f"{parse_owner(row.default_owner)}, -1, {i} }},"
+            f"{c_string(parse_default_tenant(row.default_tenant))}, -1, {i} }},"
         )
         order += 1
 
     for i, row in enumerate(pm.pwm):
         catalog_rows.append(
             f"  {{ {c_string(row.channel)}, TARS_RES_KIND_PWM, {order}U, "
-            f"{parse_owner(row.default_owner)}, -1, {i} }},"
+            f"{c_string(parse_default_tenant(row.default_tenant))}, -1, {i} }},"
         )
         order += 1
 
     for i, row in enumerate(pm.dac):
         catalog_rows.append(
             f"  {{ {c_string(row.channel)}, TARS_RES_KIND_DAC, {order}U, "
-            f"{parse_owner(row.default_owner)}, -1, {i} }},"
+            f"{c_string(parse_default_tenant(row.default_tenant))}, -1, {i} }},"
         )
         order += 1
 

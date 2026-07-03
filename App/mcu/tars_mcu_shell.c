@@ -3,6 +3,8 @@
 #include "tars_res_mgr.h"
 #include "tars_res_pwm.h"
 #include "tars_res_dac.h"
+#include "tars_res_awg.h"
+#include "tars_tenant.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,18 +29,16 @@ static void mcu_shell_help(char *out, uint32_t out_size)
   (void)snprintf(out,
                  out_size,
                  "mcu commands:\r\n"
-                 "  mcu info\r\n"
-                 "  mcu res list|status <id>|grant <id> <owner>\r\n"
-                 "  mcu res save|load|clear|profile show\r\n"
-                 "  mcu pwm list|status [ch]|enable <ch> <0|1>\r\n"
-                 "  mcu pwm duty <ch> <0-100>|freq <tim> <hz>\r\n"
-                 "  mcu pwm persist <ch> <0|1>\r\n"
-                 "  mcu dac list|status [ch]|enable <ch> <0|1>\r\n"
-                 "  mcu dac value <ch> <0-100>\r\n"
-                 "  mcu gpio write|read|list\r\n"
-                 "  mcu pinmap\r\n"
-                 "  mcu spec list|<id>\r\n"
-                 "  owners: none gpio pwm foc system dac\r\n");
+                 "  mcu help          Show this help\r\n"
+                 "  mcu info          Board and firmware info\r\n"
+                 "  mcu res           Resource tenants and grants\r\n"
+                 "  mcu pwm           PWM channels and timers\r\n"
+                 "  mcu dac           Static DAC output level\r\n"
+                 "  mcu awg           Arbitrary waveform generator\r\n"
+                 "  mcu gpio          GPIO read and write\r\n"
+                 "  mcu pinmap        Pin and peripheral map\r\n"
+                 "  mcu spec          Design and runtime specs\r\n"
+                 "try: mcu <subcmd> for usage\r\n");
 }
 
 static void mcu_shell_stub_status(const char *resource, char *out, uint32_t out_size)
@@ -142,24 +142,23 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
     if (strncmp(rest, "grant ", 6) == 0)
     {
-      tars_owner_t owner;
-
       if (sscanf(rest + 6, "%23s %15s", id, owner_text) != 2)
       {
         (void)snprintf(out,
                        out_size,
-                       "mcu res grant: use res grant <id> <none|gpio|pwm|foc>\r\n");
+                       "mcu res grant: use res grant <id> <tenant|none>\r\n");
         return 1;
       }
 
-      if (TarsOwner_Parse(owner_text, &owner) != 0)
+      if ((strcmp(owner_text, "none") != 0) &&
+          (TarsTenant_ValidateGrantName(owner_text) != 0))
       {
-        (void)snprintf(out, out_size, "mcu res grant: bad owner %s\r\n", owner_text);
+        (void)snprintf(out, out_size, "mcu res grant: bad tenant %s\r\n", owner_text);
         return 1;
       }
 
       {
-        int st = TarsMcu_ResGrant(id, owner);
+        int st = TarsMcu_ResGrant(id, owner_text);
 
         if (st != 0)
         {
@@ -173,7 +172,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
         {
           (void)snprintf(out,
                          out_size,
-                         "mcu res grant: id=%s owner=%s\r\n",
+                         "mcu res grant: id=%s tenant=%s\r\n",
                          id,
                          owner_text);
         }
@@ -583,6 +582,139 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
     }
 
     (void)snprintf(out, out_size, "mcu dac: use list|status|enable|value\r\n");
+    return 1;
+  }
+
+  if (mcu_str_eq(sub, "awg"))
+  {
+    char ch[24];
+    unsigned long val = 0UL;
+
+    if ((rest[0] == '\0') || mcu_str_eq(rest, "status"))
+    {
+      (void)snprintf(out, out_size, "mcu awg: use status <ch>|gen|freq|enable\r\n");
+      return 1;
+    }
+
+    if (strncmp(rest, "status ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s", ch) != 1)
+      {
+        (void)snprintf(out, out_size, "mcu awg status: use awg status <ch>\r\n");
+        return 1;
+      }
+      (void)TarsResAwg_GetStatus(ch, out, out_size);
+      return 1;
+    }
+
+    if (strncmp(rest, "gen ", 4) == 0)
+    {
+      char wave_name[16];
+      unsigned long points = 256UL;
+      double ampl = 100.0;
+      double offset = 50.0;
+      double duty = 50.0;
+      tars_awg_wave_t wave;
+      int n;
+
+      n = sscanf(rest + 4, "%23s %15s %lu %lf %lf %lf",
+                 ch, wave_name, &points, &ampl, &offset, &duty);
+      if (n < 2)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu awg gen: use gen <ch> <wave> [pts] [ampl%%] [off%%] [duty%%]\r\n");
+        return 1;
+      }
+
+      if (TarsResAwg_ParseWave(wave_name, &wave) != 0)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu awg gen: bad wave %s (sin|square|tri|saw|dc|noise)\r\n",
+                       wave_name);
+        return 1;
+      }
+
+      {
+        int st = TarsResAwg_Generate(ch, wave, (uint32_t)points, 0U,
+                                     (float)ampl, (float)offset, (float)duty);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg gen: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)TarsResAwg_GetStatus(ch, out, out_size);
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "freq ", 5) == 0)
+    {
+      if (sscanf(rest + 5, "%23s %lu", ch, &val) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu awg freq: use freq <ch> <hz>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsResAwg_SetFreq(ch, (uint32_t)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg freq: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)TarsResAwg_GetStatus(ch, out, out_size);
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "enable ", 7) == 0)
+    {
+      if (sscanf(rest + 7, "%23s %lu", ch, &val) != 2)
+      {
+        (void)snprintf(out, out_size, "mcu awg enable: use enable <ch> <0|1>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsResAwg_Enable(ch, (int)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg enable: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu awg enable: ch=%s val=%lu\r\n",
+                         ch,
+                         val);
+        }
+      }
+      return 1;
+    }
+
+    (void)snprintf(out, out_size, "mcu awg: use status|gen|freq|enable\r\n");
     return 1;
   }
 

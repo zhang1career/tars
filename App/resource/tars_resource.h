@@ -23,7 +23,7 @@ int TarsResource_PwmSetPersist(const char *channel, int boot_enable);
 int TarsResource_DacEnable(const char *channel, int enable);
 int TarsResource_DacSetLevel(const char *channel, float level_pct);
 
-int TarsResource_ResGrant(const char *id, tars_owner_t owner);
+int TarsResource_ResGrant(const char *id, const char *tenant);
 
 int TarsResource_ProfileSave(void);
 int TarsResource_ProfileLoad(void);

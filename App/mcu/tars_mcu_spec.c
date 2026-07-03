@@ -3,6 +3,7 @@
 #include "tars_res_mgr.h"
 #include "tars_res_pwm.h"
 #include "tars_res_dac.h"
+#include "tars_tenant.h"
 #include "tim.h"
 #include "foc_params.h"
 #include <stdio.h>
@@ -144,8 +145,8 @@ static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
   uint32_t design_freq;
   uint32_t runtime_freq;
   uint32_t arr;
-  tars_owner_t owner;
-  tars_owner_t active;
+  char tenant[TARS_TENANT_LEN];
+  char active[TARS_TENANT_LEN];
   uint8_t duty = 0U;
   int boot_enable = 0;
 
@@ -162,17 +163,17 @@ static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
   }
   runtime_freq = spec_runtime_tim_freq_hz(tim, map->tim_id);
   arr = (tim != NULL) ? tim->ARR : 0U;
-  owner = TarsResMgr_GetOwner(map->channel);
-  active = TarsResMgr_GetActive(map->channel);
+  (void)TarsResMgr_GetTenant(map->channel, tenant, sizeof(tenant));
+  (void)TarsResMgr_GetActiveTenant(map->channel, active, sizeof(active));
   (void)TarsResPwm_GetDuty(map->channel, &duty);
   (void)TarsResPwm_GetPersist(map->channel, &boot_enable);
 
   (void)snprintf(out,
                  out_size,
                  "spec %s (pwm):\r\n"
-                 "  design: tim=%s chan=%lu pin=%s owner_default=%s "
+                 "  design: tim=%s chan=%lu pin=%s tenant_default=%s "
                  "freq_hz=%lu freq_source=%s shell_freq_mutable=%d pwm_mode=%s\r\n"
-                 "  runtime: owner=%s active=%s duty=%u%% boot_enable=%d "
+                 "  runtime: tenant=%s active=%s duty=%u%% boot_enable=%d "
                  "arr=%lu tim_freq_hz=%lu cen=%lu\r\n",
                  map->channel,
                  map->tim_id ? map->tim_id : "?",
@@ -181,15 +182,15 @@ static int spec_format_pwm(const char *id, char *out, uint32_t out_size)
                                  (map->hal_channel == TIM_CHANNEL_3)   ? 3U :
                                  (map->hal_channel == TIM_CHANNEL_4)   ? 4U : 0U),
                  map->pin_name ? map->pin_name : "?",
-                 TarsOwner_ToString(map->default_owner),
+                 TarsTenant_Display(map->default_tenant),
                  (unsigned long)design_freq,
                  (strcmp(map->tim_id, "tim1") == 0) ? "FOC_PARAM_FPWM_HZ" :
                  (strcmp(map->tim_id, "tim9") == 0) ? "TARS_TIM9_PWM_HZ" :
                  (map->default_freq_hz != 0U) ? "pinmap_default_freq_hz" : "TARS_PWM_DEFAULT_HZ",
                  spec_tim_shell_freq_mutable(map->tim_id),
                  spec_pwm_mode(map->tim_id),
-                 TarsOwner_ToString(owner),
-                 TarsOwner_ToString(active),
+                 TarsTenant_Display(tenant),
+                 TarsTenant_Display(active),
                  (unsigned)duty,
                  boot_enable,
                  (unsigned long)arr,
@@ -227,16 +228,27 @@ static int spec_format_gpio(const char *id, char *out, uint32_t out_size)
     return -1;
   }
 
+  char tenant[TARS_TENANT_LEN];
+  char active[TARS_TENANT_LEN];
+
+  if (entry == NULL)
+  {
+    return -1;
+  }
+
+  (void)TarsResMgr_GetTenant(entry->pin_name, tenant, sizeof(tenant));
+  (void)TarsResMgr_GetActiveTenant(entry->pin_name, active, sizeof(active));
+
   (void)snprintf(out,
                  out_size,
                  "spec %s (gpio):\r\n"
-                 "  design: alias=%s owner_default=%s\r\n"
-                 "  runtime: owner=%s active=%s\r\n",
+                 "  design: alias=%s tenant_default=%s\r\n"
+                 "  runtime: tenant=%s active=%s\r\n",
                  entry->pin_name,
                  (entry->alias != NULL && entry->alias[0] != '\0') ? entry->alias : "-",
-                 TarsOwner_ToString(entry->default_owner),
-                 TarsOwner_ToString(TarsResMgr_GetOwner(entry->pin_name)),
-                 TarsOwner_ToString(TarsResMgr_GetActive(entry->pin_name)));
+                 TarsTenant_Display(entry->default_tenant),
+                 TarsTenant_Display(tenant),
+                 TarsTenant_Display(active));
   return 0;
 }
 
@@ -245,23 +257,28 @@ static int spec_format_dac(const char *id, char *out, uint32_t out_size)
   const tars_mcu_dac_entry_t *map = NULL;
   float level = 0.0f;
 
+  char tenant[TARS_TENANT_LEN];
+  char active[TARS_TENANT_LEN];
+
   if (TarsMcuPinmap_ResolveDac(id, &map) != 0)
   {
     return -1;
   }
 
   (void)TarsResDac_GetLevel(map->channel, &level);
+  (void)TarsResMgr_GetTenant(map->channel, tenant, sizeof(tenant));
+  (void)TarsResMgr_GetActiveTenant(map->channel, active, sizeof(active));
 
   (void)snprintf(out,
                  out_size,
                  "spec %s (dac):\r\n"
-                 "  design: pin=%s owner_default=%s vref=VDDA (~3.3V)\r\n"
-                 "  runtime: owner=%s active=%s level=%u%% run=%d\r\n",
+                 "  design: pin=%s tenant_default=%s vref=VDDA (~3.3V)\r\n"
+                 "  runtime: tenant=%s active=%s level=%u%% run=%d\r\n",
                  map->channel,
                  map->pin_name ? map->pin_name : "?",
-                 TarsOwner_ToString(map->default_owner),
-                 TarsOwner_ToString(TarsResMgr_GetOwner(map->channel)),
-                 TarsOwner_ToString(TarsResMgr_GetActive(map->channel)),
+                 TarsTenant_Display(map->default_tenant),
+                 TarsTenant_Display(tenant),
+                 TarsTenant_Display(active),
                  (unsigned)(level + 0.5f),
                  TarsResDac_IsRunning(map->channel));
   return 0;

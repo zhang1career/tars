@@ -1,6 +1,7 @@
 #include "tars_res_dac.h"
 #include "tars_res_mgr.h"
 #include "tars_mcu_pinmap.h"
+#include "tars_tenant.h"
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
@@ -160,7 +161,7 @@ int TarsResDac_Enable(const char *channel, int enable)
     return TARS_RES_ERR_SCOPE;
   }
 
-  if (TarsResMgr_GetOwner(channel) != TARS_OWNER_DAC)
+  if (TarsResMgr_TenantAssigned(channel) == 0)
   {
     return TARS_RES_ERR_OWNER;
   }
@@ -178,7 +179,7 @@ int TarsResDac_Enable(const char *channel, int enable)
     if (ch->running != 0U)
     {
       (void)HAL_DAC_Stop(&s_hdac, map->hal_channel);
-      (void)TarsResMgr_ReleaseDac(channel, TARS_OWNER_DAC);
+      (void)TarsResMgr_ReleaseDac(channel);
       ch->running = 0U;
     }
     return 0;
@@ -189,7 +190,7 @@ int TarsResDac_Enable(const char *channel, int enable)
     return 0;
   }
 
-  st = TarsResMgr_AcquireDac(channel, TARS_OWNER_DAC);
+  st = TarsResMgr_AcquireDac(channel);
   if (st != 0)
   {
     return st;
@@ -199,19 +200,19 @@ int TarsResDac_Enable(const char *channel, int enable)
 
   if (dac_configure_channel(map) != 0)
   {
-    (void)TarsResMgr_ReleaseDac(channel, TARS_OWNER_DAC);
+    (void)TarsResMgr_ReleaseDac(channel);
     return TARS_RES_ERR_PARAM;
   }
 
   if (HAL_DAC_SetValue(&s_hdac, map->hal_channel, DAC_ALIGN_12B_R, ch->value) != HAL_OK)
   {
-    (void)TarsResMgr_ReleaseDac(channel, TARS_OWNER_DAC);
+    (void)TarsResMgr_ReleaseDac(channel);
     return TARS_RES_ERR_PARAM;
   }
 
   if (HAL_DAC_Start(&s_hdac, map->hal_channel) != HAL_OK)
   {
-    (void)TarsResMgr_ReleaseDac(channel, TARS_OWNER_DAC);
+    (void)TarsResMgr_ReleaseDac(channel);
     return TARS_RES_ERR_PARAM;
   }
 
@@ -306,17 +307,23 @@ int TarsResDac_GetStatus(const char *channel, char *out, uint32_t out_size)
     return TARS_RES_ERR_SCOPE;
   }
 
+  char tenant[TARS_TENANT_LEN];
+  char active[TARS_TENANT_LEN];
+
   ch_slot = dac_find_ch_slot(channel, 0);
   ch = (ch_slot >= 0) ? &s_ch_pool[(uint32_t)ch_slot] : NULL;
   (void)TarsResDac_GetLevel(channel, &level);
 
+  (void)TarsResMgr_GetTenant(channel, tenant, sizeof(tenant));
+  (void)TarsResMgr_GetActiveTenant(channel, active, sizeof(active));
+
   (void)snprintf(out,
                  out_size,
-                 "dac: ch=%s pin=%s owner=%s active=%s run=%u level=%u%% raw=%u\r\n",
+                 "dac: ch=%s pin=%s tenant=%s active=%s run=%u level=%u%% raw=%u\r\n",
                  map->channel,
                  map->pin_name,
-                 TarsOwner_ToString(TarsResMgr_GetOwner(channel)),
-                 TarsOwner_ToString(TarsResMgr_GetActive(channel)),
+                 TarsTenant_Display(tenant),
+                 TarsTenant_Display(active),
                  (unsigned)((ch != NULL) ? ch->running : 0U),
                  (unsigned)(level + 0.5f),
                  (unsigned)((ch != NULL) ? ch->value : 0U));

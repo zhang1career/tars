@@ -16,7 +16,7 @@ int TarsMcu_PwmGetPersist(const char *channel, int *boot_enable_out);
 int TarsMcu_DacEnable(const char *channel, int enable);
 int TarsMcu_DacSetLevel(const char *channel, float level_pct);
 
-int TarsMcu_ResGrant(const char *id, tars_owner_t owner);
+int TarsMcu_ResGrant(const char *id, const char *tenant);
 
 int TarsMcu_ProfileSave(void);
 int TarsMcu_ProfileLoad(void);

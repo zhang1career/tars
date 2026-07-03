@@ -1,4 +1,5 @@
 #include "tars_res_pwm.h"
+#include "tars_tenant.h"
 #include "tars_res_mgr.h"
 #include "tars_mcu_pinmap.h"
 #include "tars_foc.h"
@@ -477,7 +478,7 @@ int TarsResPwm_Enable(const char *channel, int enable)
     return TARS_RES_ERR_SCOPE;
   }
 
-  if (TarsResMgr_GetOwner(channel) != TARS_OWNER_PWM)
+  if (TarsResMgr_TenantAssigned(channel) == 0)
   {
     return TARS_RES_ERR_OWNER;
   }
@@ -491,7 +492,10 @@ int TarsResPwm_Enable(const char *channel, int enable)
    * writing the neutral compares and this channel's duty actually sticks. */
   if ((map->advanced_tim != 0U) && (enable != 0))
   {
-    TarsResMgr_TimDomainForceSet(map->tim_id, TARS_OWNER_PWM);
+    char tenant[TARS_TENANT_LEN];
+
+    (void)TarsResMgr_GetTenant(channel, tenant, sizeof(tenant));
+    TarsResMgr_TimDomainForceSet(map->tim_id, tenant);
   }
 
   ch_slot = pwm_find_ch_slot(channel, 1);
@@ -527,11 +531,11 @@ int TarsResPwm_Enable(const char *channel, int enable)
         {
           __HAL_TIM_MOE_DISABLE(htim);
           /* Hand the TIM1 domain back to FOC; its ISR resumes neutral duty. */
-          TarsResMgr_TimDomainForceSet(map->tim_id, TARS_OWNER_FOC);
+          TarsResMgr_TimDomainForceSet(map->tim_id, TARS_TENANT_FOC);
         }
       }
 
-      (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
+      (void)TarsResMgr_ReleasePwm(channel);
 
       {
         int tslot = pwm_find_tim_slot(map->tim, 0);
@@ -549,7 +553,7 @@ int TarsResPwm_Enable(const char *channel, int enable)
     return 0;
   }
 
-  st = TarsResMgr_AcquirePwm(channel, TARS_OWNER_PWM);
+  st = TarsResMgr_AcquirePwm(channel);
   if (st != 0)
   {
     return st;
@@ -564,14 +568,14 @@ int TarsResPwm_Enable(const char *channel, int enable)
 
   if (pwm_configure_channel(map, ch->duty_pct) != 0)
   {
-    (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
+    (void)TarsResMgr_ReleasePwm(channel);
     return TARS_RES_ERR_PARAM;
   }
 
   htim = pwm_tim_handle(map);
   if (htim == NULL)
   {
-    (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
+    (void)TarsResMgr_ReleasePwm(channel);
     return TARS_RES_ERR_PARAM;
   }
 
@@ -583,7 +587,7 @@ int TarsResPwm_Enable(const char *channel, int enable)
       /* FOC init already starts TIM1 PWM channels (MOE off). Shell reuse is OK. */
       if ((map->tim != TIM1) || ((htim->Instance->CR1 & TIM_CR1_CEN) == 0U))
       {
-        (void)TarsResMgr_ReleasePwm(channel, TARS_OWNER_PWM);
+        (void)TarsResMgr_ReleasePwm(channel);
         return TARS_RES_ERR_PARAM;
       }
     }
@@ -797,18 +801,26 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
   uint32_t afr = 0U;
   TIM_TypeDef *tim = map->tim;
 
+  char tenant[TARS_TENANT_LEN];
+  char active[TARS_TENANT_LEN];
+  char tim_drv[TARS_TENANT_LEN];
+
   ch_slot = pwm_find_ch_slot(channel, 0);
   ch = (ch_slot >= 0) ? &s_ch_pool[(uint32_t)ch_slot] : NULL;
 
+  (void)TarsResMgr_GetTenant(channel, tenant, sizeof(tenant));
+  (void)TarsResMgr_GetActiveTenant(channel, active, sizeof(active));
+  (void)TarsResMgr_GetTimDomainActiveTenant(map->tim_id, tim_drv, sizeof(tim_drv));
+
   written = snprintf(out,
                      out_size,
-                     "pwm: ch=%s pin=%s tim=%s owner=%s active=%s drv=%s run=%u duty=%u%%\r\n",
+                     "pwm: ch=%s pin=%s tim=%s tenant=%s active=%s drv=%s run=%u duty=%u%%\r\n",
                      map->channel,
                      map->pin_name,
                      map->tim_id ? map->tim_id : "?",
-                     TarsOwner_ToString(TarsResMgr_GetOwner(channel)),
-                     TarsOwner_ToString(TarsResMgr_GetActive(channel)),
-                     TarsOwner_ToString(TarsResMgr_TimDomainActiveOwner(map->tim_id)),
+                     TarsTenant_Display(tenant),
+                     TarsTenant_Display(active),
+                     TarsTenant_Display(tim_drv),
                      (unsigned)((ch != NULL) ? ch->running : 0U),
                      (unsigned)((ch != NULL) ? ch->duty_pct : 0U));
   if ((written < 0) || ((uint32_t)written >= out_size))

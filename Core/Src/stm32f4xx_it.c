@@ -67,6 +67,8 @@ extern TIM_HandleTypeDef htim6;
 extern UART_HandleTypeDef huart5;
 extern DMA_HandleTypeDef hdma_uart5_tx;
 extern ADC_HandleTypeDef hadc1;
+extern DMA_HandleTypeDef hdma_awg0;  /* AWG dac0 circular DMA (Stream5) */
+extern DMA_HandleTypeDef hdma_awg1;  /* AWG dac1 circular DMA (Stream6) */
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -246,6 +248,22 @@ void UART5_IRQHandler(void)
 void DMA1_Stream7_IRQHandler(void)
 {
   HAL_DMA_IRQHandler(&hdma_uart5_tx);
+}
+
+/**
+  * @brief DMA1 Stream5 global interrupt (AWG DAC1 circular DMA, error only).
+  */
+void DMA1_Stream5_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_awg0);
+}
+
+/**
+  * @brief DMA1 Stream6 global interrupt (AWG DAC2 circular DMA, error only).
+  */
+void DMA1_Stream6_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_awg1);
 }
 
 /**
