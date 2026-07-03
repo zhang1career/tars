@@ -28,6 +28,7 @@ sys top
 - [Probe (SCPI telemetry & capture)](docs/probe.md)
 - [App formats](docs/app-format.md)
 - [Flash layout](docs/flash-layout.md)
+- [SDRAM layout](docs/sdram-layout.md)
 - [Scheduling](docs/scheduling.md)
 - [OTA A/B](docs/ota.md) (stub, not MVP)
 
