@@ -263,7 +263,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
 
     if ((rest[0] == '\0') || (mcu_str_eq(rest, "status")))
     {
-      (void)snprintf(out, out_size, "mcu pwm: use list|status <ch>|enable|duty|freq\r\n");
+      (void)snprintf(out, out_size, "mcu pwm: use list|status <ch>|enable|duty|freq|polarity|link|persist\r\n");
       return 1;
     }
 
@@ -403,6 +403,146 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
+    if (strncmp(rest, "polarity ", 9) == 0)
+    {
+      char pol[16];
+
+      if (sscanf(rest + 9, "%23s %15s", ch, pol) == 1)
+      {
+        int cur = 0;
+
+        if (TarsResPwm_GetPolarity(ch, &cur) != 0)
+        {
+          cur = 0;
+        }
+
+        (void)snprintf(out,
+                       out_size,
+                       "mcu pwm polarity: ch=%s pol=%s\r\n",
+                       ch,
+                       (cur != 0) ? "low" : "high");
+        return 1;
+      }
+
+      if (sscanf(rest + 9, "%23s %15s", ch, pol) != 2)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu pwm polarity: use polarity <ch> <high|low>\r\n");
+        return 1;
+      }
+
+      {
+        int low = 0;
+        int st = TarsResPwm_ParsePolarity(pol, &low);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm polarity: use polarity <ch> <high|low>\r\n");
+          return 1;
+        }
+
+        st = TarsResPwm_SetPolarity(ch, low);
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm polarity: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm polarity: ch=%s pol=%s\r\n",
+                         ch,
+                         (low != 0) ? "low" : "high");
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "link", 4) == 0 &&
+        ((rest[4] == '\0') || (rest[4] == ' ')))
+    {
+      const char *lp = rest + 4;
+
+      while (*lp == ' ')
+      {
+        lp++;
+      }
+
+      if (mcu_str_eq(lp, "status"))
+      {
+        (void)TarsResPwm_LinkGetStatus(out, out_size);
+        return 1;
+      }
+
+      if (mcu_str_eq(lp, "resync"))
+      {
+        int st = TarsResPwm_LinkResync();
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm link resync: err=%s\r\n",
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)TarsResPwm_LinkGetStatus(out, out_size);
+        }
+        return 1;
+      }
+
+      if (strncmp(lp, "offset ", 7) == 0)
+      {
+        long off = 0L;
+
+        if (sscanf(lp + 7, "%ld", &off) != 1)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm link offset: use link offset <ticks>\r\n");
+          return 1;
+        }
+
+        (void)TarsResPwm_LinkSetOffset((int32_t)off);
+        (void)TarsResPwm_LinkGetStatus(out, out_size);
+        return 1;
+      }
+
+      {
+        long on = 0L;
+        long off = 0L;
+        int n = sscanf(lp, "%ld %ld", &on, &off);
+
+        if (n < 1)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm link: use link <0|1> [offset]|offset <ticks>|resync|status\r\n");
+          return 1;
+        }
+
+        if (n >= 2)
+        {
+          (void)TarsResPwm_LinkSet((int)on, (int32_t)off);
+        }
+        else
+        {
+          (void)TarsResPwm_LinkEnable((int)on);
+        }
+
+        (void)TarsResPwm_LinkGetStatus(out, out_size);
+        return 1;
+      }
+    }
+
     if (strncmp(rest, "persist ", 8) == 0)
     {
       unsigned long boot_ul = 0UL;
@@ -453,7 +593,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq|persist\r\n");
+    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq|polarity|link|persist\r\n");
     return 1;
   }
 

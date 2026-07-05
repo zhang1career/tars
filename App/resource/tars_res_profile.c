@@ -236,9 +236,20 @@ static int profile_collect_pwm(tars_prof_pwm_t *out, uint32_t *count_out)
     int persist = 0;
     uint8_t duty = 0U;
 
-    if ((ch == NULL) || (strncmp(ch, "tim1_ch", 7) == 0))
+    if (ch == NULL)
     {
       continue;
+    }
+
+    {
+      const tars_mcu_pwm_entry_t *map = NULL;
+
+      if ((TarsMcuPinmap_ResolvePwm(ch, &map) == 0) &&
+          (map->default_tenant != NULL) &&
+          (strcmp(map->default_tenant, TARS_TENANT_FOC) == 0))
+      {
+        continue;
+      }
     }
 
     if (TarsResPwm_GetPersist(ch, &persist) != 0)

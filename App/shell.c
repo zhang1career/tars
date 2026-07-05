@@ -1,4 +1,6 @@
 #include "shell.h"
+#include "shell_hist.h"
+#include "ring_stream.h"
 #include "tars_lfs.h"
 #include "tars_vfs.h"
 #include "tars_ota.h"
@@ -34,14 +36,22 @@ typedef enum {
   SHELL_BIN_AWG_UPLOAD = 1
 } shell_bin_sink_t;
 
-static uint8_t s_rx_ring[SHELL_RX_RING_SIZE];
-static volatile uint32_t s_rx_head;
-static volatile uint32_t s_rx_tail;
+static uint8_t s_rx_buf[SHELL_RX_RING_SIZE];
+static ring_stream_t s_rx_stream;
 static volatile uint8_t s_cdc_ready;
 
 static char s_line[SHELL_LINE_SIZE];
 static uint16_t s_line_len;
+static uint16_t s_line_cursor;
 static uint8_t s_prompt_pending = 1U;
+
+typedef enum {
+  SHELL_ESC_NONE = 0,
+  SHELL_ESC_SEEN,
+  SHELL_ESC_CSI
+} shell_esc_state_t;
+
+static shell_esc_state_t s_esc_state;
 
 static shell_mode_t s_mode;
 static uint32_t s_bin_target;
@@ -53,14 +63,7 @@ static char s_bin_awg_ch[8];
 
 static int shell_read_char(uint8_t *ch)
 {
-  if (s_rx_head == s_rx_tail)
-  {
-    return 0;
-  }
-
-  *ch = s_rx_ring[s_rx_tail];
-  s_rx_tail = (s_rx_tail + 1U) % SHELL_RX_RING_SIZE;
-  return 1;
+  return (ring_stream_pop(&s_rx_stream, ch) == 0) ? 1 : 0;
 }
 
 static uint8_t shell_usb_configured(void)
@@ -138,18 +141,7 @@ void Shell_CdcRxPush(const uint8_t *data, uint32_t len)
     return;
   }
 
-  for (i = 0U; i < len; i++)
-  {
-    uint32_t next = (s_rx_head + 1U) % SHELL_RX_RING_SIZE;
-
-    if (next == s_rx_tail)
-    {
-      break;
-    }
-
-    s_rx_ring[s_rx_head] = data[i];
-    s_rx_head = next;
-  }
+  (void)ring_stream_push_buf(&s_rx_stream, data, len);
 }
 
 uint8_t Shell_CdcIsReady(void)
@@ -368,11 +360,14 @@ static void shell_execute_line(void)
     return;
   }
 
+  ShellHist_Push(s_line);
+
   if (shell_str_eq(s_line, "help"))
   {
     shell_write_str(
       "Commands:\r\n"
       "  help              Show this help\r\n"
+      "  history           List recent commands (history N for last N)\r\n"
       "  status            USB role/CDC; state 1 default 2 addressed 3 configured 4 suspended\r\n"
       "  echo              Echo arguments\r\n"
       "  mcu               On-chip hardware (try mcu help)\r\n"
@@ -384,6 +379,50 @@ static void shell_execute_line(void)
       "  ota               OTA status (stub)\r\n"
       "  hal               HAL placeholders\r\n"
       "  motor             FOC motor control\r\n");
+  }
+  else if (strncmp(s_line, "history", 7) == 0 &&
+           (s_line[7] == '\0' || s_line[7] == ' '))
+  {
+    uint32_t count = ShellHist_Count();
+    uint32_t limit = count;
+    const char *arg = s_line + 7;
+
+    if ((arg[0] == ' ') && (arg[1] != '\0'))
+    {
+      unsigned long n = strtoul(arg + 1, NULL, 0);
+
+      limit = (uint32_t)n;
+      if (limit > count)
+      {
+        limit = count;
+      }
+    }
+
+    if (count == 0U)
+    {
+      shell_write_str("history: (empty)\r\n");
+    }
+    else
+    {
+      uint32_t i;
+      char msg[SHELL_LINE_SIZE + 16U];
+
+      for (i = 0U; i < limit; i++)
+      {
+        uint32_t num = count - limit + i + 1U;
+        uint32_t age = limit - 1U - i;
+        const char *entry = ShellHist_Entry(age);
+
+        if (entry == NULL)
+        {
+          break;
+        }
+
+        (void)snprintf(msg, sizeof(msg), "  %lu  %s\r\n",
+                       (unsigned long)num, entry);
+        shell_write_str(msg);
+      }
+    }
   }
   else if (shell_str_eq(s_line, "status"))
   {
@@ -786,8 +825,182 @@ static uint8_t shell_echo_enabled(void)
   return 1U;
 }
 
+static void shell_line_redraw(void)
+{
+  uint16_t i;
+
+  if (!shell_echo_enabled())
+  {
+    return;
+  }
+
+  shell_write_str("\r");
+  shell_write_str(SHELL_PROMPT);
+  s_line[s_line_len] = '\0';
+  shell_write_str(s_line);
+  shell_write_str("\x1b[K");
+  for (i = s_line_cursor; i < s_line_len; i++)
+  {
+    shell_write_str("\b");
+  }
+}
+
+static void shell_set_line(const char *line)
+{
+  if ((line == NULL) || (line[0] == '\0'))
+  {
+    s_line[0] = '\0';
+    s_line_len = 0U;
+  }
+  else
+  {
+    (void)strncpy(s_line, line, SHELL_LINE_SIZE - 1U);
+    s_line[SHELL_LINE_SIZE - 1U] = '\0';
+    s_line_len = (uint16_t)strlen(s_line);
+  }
+
+  s_line_cursor = s_line_len;
+  shell_line_redraw();
+}
+
+static void shell_insert_char(char ch)
+{
+  ShellHist_ResetBrowse();
+
+  if (s_line_len >= (SHELL_LINE_SIZE - 1U))
+  {
+    return;
+  }
+
+  if (s_line_cursor == s_line_len)
+  {
+    s_line[s_line_len++] = ch;
+    s_line_cursor++;
+
+    if (shell_echo_enabled())
+    {
+      char out[2] = {ch, '\0'};
+      shell_write_str(out);
+    }
+  }
+  else
+  {
+    memmove(&s_line[s_line_cursor + 1U], &s_line[s_line_cursor],
+            (size_t)(s_line_len - s_line_cursor));
+    s_line[s_line_cursor] = ch;
+    s_line_len++;
+    s_line_cursor++;
+    shell_line_redraw();
+  }
+}
+
+static void shell_backspace(void)
+{
+  ShellHist_ResetBrowse();
+
+  if (s_line_cursor == 0U)
+  {
+    return;
+  }
+
+  memmove(&s_line[s_line_cursor - 1U], &s_line[s_line_cursor],
+          (size_t)(s_line_len - s_line_cursor));
+  s_line_len--;
+  s_line_cursor--;
+  shell_line_redraw();
+}
+
+static void shell_cursor_left(void)
+{
+  if (s_line_cursor == 0U)
+  {
+    return;
+  }
+
+  s_line_cursor--;
+
+  if (shell_echo_enabled())
+  {
+    shell_write_str("\b");
+  }
+}
+
+static void shell_cursor_right(void)
+{
+  if (s_line_cursor >= s_line_len)
+  {
+    return;
+  }
+
+  if (shell_echo_enabled())
+  {
+    char out[2] = {s_line[s_line_cursor], '\0'};
+    shell_write_str(out);
+  }
+
+  s_line_cursor++;
+}
+
+static void shell_handle_csi(char final)
+{
+  const char *hist_line;
+
+  switch (final)
+  {
+  case 'A':
+    if (ShellHist_Prev(&hist_line) == 0)
+    {
+      shell_set_line(hist_line);
+    }
+    break;
+  case 'B':
+    if (ShellHist_Next(&hist_line) == 0)
+    {
+      shell_set_line(hist_line);
+    }
+    break;
+  case 'C':
+    shell_cursor_right();
+    break;
+  case 'D':
+    shell_cursor_left();
+    break;
+  default:
+    break;
+  }
+}
+
 static void shell_handle_char(uint8_t ch)
 {
+  if (s_esc_state == SHELL_ESC_CSI)
+  {
+    if (((ch >= 0x40U) && (ch <= 0x7EU)) || (ch == '~'))
+    {
+      shell_handle_csi((char)ch);
+      s_esc_state = SHELL_ESC_NONE;
+    }
+    return;
+  }
+
+  if (s_esc_state == SHELL_ESC_SEEN)
+  {
+    if (ch == '[')
+    {
+      s_esc_state = SHELL_ESC_CSI;
+    }
+    else
+    {
+      s_esc_state = SHELL_ESC_NONE;
+    }
+    return;
+  }
+
+  if (ch == 0x1BU)
+  {
+    s_esc_state = SHELL_ESC_SEEN;
+    return;
+  }
+
   if (ch == '\r' || ch == '\n')
   {
     if (shell_echo_enabled())
@@ -797,33 +1010,19 @@ static void shell_handle_char(uint8_t ch)
 
     shell_execute_line();
     s_line_len = 0U;
+    s_line_cursor = 0U;
     return;
   }
 
   if (ch == 0x7FU || ch == 0x08U)
   {
-    if (s_line_len > 0U)
-    {
-      s_line_len--;
-
-      if (shell_echo_enabled())
-      {
-        shell_write_str("\b \b");
-      }
-    }
-
+    shell_backspace();
     return;
   }
 
-  if (ch >= 0x20U && s_line_len < (SHELL_LINE_SIZE - 1U))
+  if (ch >= 0x20U)
   {
-    s_line[s_line_len++] = (char)ch;
-
-    if (shell_echo_enabled())
-    {
-      char out[2] = {(char)ch, '\0'};
-      shell_write_str(out);
-    }
+    shell_insert_char((char)ch);
   }
 }
 
@@ -834,9 +1033,11 @@ void Shell_OnUsbConfigured(void)
 
 void Shell_Init(void)
 {
-  s_rx_head = 0U;
-  s_rx_tail = 0U;
+  ring_stream_init(&s_rx_stream, s_rx_buf, SHELL_RX_RING_SIZE);
+  ShellHist_Init();
   s_line_len = 0U;
+  s_line_cursor = 0U;
+  s_esc_state = SHELL_ESC_NONE;
   s_prompt_pending = 1U;
   s_cdc_ready = 0U;
   s_mode = SHELL_MODE_TEXT;

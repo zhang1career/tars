@@ -19,9 +19,13 @@ in that configuration.
 | `0xD0100000` | 256 KiB | `0xD0140000` | `TARS_PROBE_CAP_*` | **Probe** trigger-capture buffer → UART DMA. See [probe.md](probe.md). |
 | `0xD0140000` | 16 KiB  | `0xD0144000` | `TARS_AWG_WAVE_BASE` + slot 0 | **AWG dac0** sample table (max 8192 × uint16). |
 | `0xD0144000` | 16 KiB  | `0xD0148000` | slot 1 stride | **AWG dac1** sample table (max 8192 × uint16). |
-| `0xD0148000` | ~7.5 MiB | `0xD0800000` | — | **Unreserved** (available for future use). |
+| `0xD0150000` | 4 KiB   | `0xD0151000` | `TARS_SHELL_HIST_*` | **USB shell command history** (32 × 128 B slots, RAM-only). |
+| `0xD0151000` | ~6.68 MiB | `0xD0800000` | — | **Unreserved** (available for future use). |
 
 **AWG total:** `TARS_AWG_WAVE_SIZE` = 32 KiB (`2 × TARS_AWG_CH_STRIDE`).
+
+**Shell history total:** `TARS_SHELL_HIST_SIZE` = 4 KiB (`TARS_SHELL_HIST_SLOTS` ×
+`TARS_SHELL_HIST_SLOT_SIZE`). Lost on power cycle; not persisted to flash.
 
 ## AWG (dac0 / dac1)
 
@@ -36,6 +40,21 @@ dac1 (PA5): 0xD0144000 .. 0xD0147FFF
 - Streamed to the DAC by TIM7-triggered circular DMA (zero CPU during playback).
 - Upload or `gen` on one channel does not touch the other region.
 - See [mcu-shell.md](mcu-shell.md) (AWG section).
+
+## USB shell command history
+
+Ring buffer of the last **`TARS_SHELL_HIST_SLOTS` (32)** commands, each up to
+**128** characters (`SHELL_LINE_SIZE`). Stored in SDRAM at **`0xD0150000`**
+(`App/shell_hist.c`, `Lib/ds/profile/ring_slots.c`).
+
+```
+0xD0150000 .. 0xD0150FFF   slot ring (32 × 128 B)
+```
+
+- **Lifetime:** RAM only — cleared on reset / power loss (no LittleFS backing).
+- **Browse:** ↑ / ↓ in the USB shell; **`history`** / **`history N`** to list.
+- **Dedup:** consecutive identical commands are not stored twice.
+- Does not overlap AWG or probe regions; sits immediately above `TARS_AWG_WAVE_*`.
 
 ## LCD vs fixed regions
 
@@ -64,11 +83,23 @@ Regions from **`0xD00C0000` upward** do not overlap the LCD framebuffer.
    is no MPU enforcement, only convention.
 4. **Lua heap** is owned by the Lua allocator; do not alias it for DMA unless
    the heap is relocated in code.
+5. **Shell history** is a small fixed slot ring; safe to use alongside probe and
+   AWG (no DMA). Do not expand it downward into AWG without updating macros.
+
+## Occupancy summary (default motor build, `TARS_ENABLE_LCD=OFF`)
+
+| Category | Size | Notes |
+|----------|------|-------|
+| Reserved (fixed map) | ~1.16 MiB | `0xD0028000` … `0xD0151000` (exec → shell history; includes ~96 KiB gap before install staging). |
+| LCD framebuffer | 300 KiB | **`0xD0000000`** — only compiled in when `TARS_ENABLE_LCD=ON`; overlaps exec region. |
+| Unreserved tail | ~6.68 MiB | `0xD0151000` … `0xD07FFFFF`. |
+| **Device total** | **8 MiB** | FMC SDRAM Bank 2. |
 
 ## Shell / debug
 
 - Flash map only: `sys part` (internal flash, not SDRAM).
 - RTOS + Lua heap usage: `sys top`.
+- Command history: `history`, `history N` (does not print SDRAM addresses).
 - AWG runtime: `mcu awg status dac0` / `dac1` (does not print addresses).
 
 ## Related docs
@@ -78,4 +109,5 @@ Regions from **`0xD00C0000` upward** do not overlap the LCD framebuffer.
 | Internal flash | [flash-layout.md](flash-layout.md) |
 | Probe capture buffer | [probe.md](probe.md) |
 | AWG commands | [mcu-shell.md](mcu-shell.md) |
+| Shell history (`history`, ↑/↓) | `App/shell_hist.c`, `App/shell.c` |
 | Constants | `App/tars_platform.h`, `App/lcd/lcd_fb.c` |

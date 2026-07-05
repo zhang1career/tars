@@ -50,6 +50,7 @@ class PwmRow:
     alias: str = ""
     default_freq_hz: int = 0
     default_duty_pct: int = 0
+    polarity_low: int = 0
 
 
 @dataclass
@@ -115,6 +116,15 @@ def hal_channel(chan: int) -> str:
     if chan < 1 or chan > 4:
         raise ValueError(f"pwm channel number must be 1..4, got {chan}")
     return f"TIM_CHANNEL_{chan}"
+
+
+def parse_polarity(value: str) -> int:
+    key = value.strip().lower()
+    if key in {"", "high", "h", "0"}:
+        return 0
+    if key in {"low", "l", "1", "invert", "inverted"}:
+        return 1
+    raise ValueError(f"unknown pwm polarity {value!r}; use high|low")
 
 
 def hal_dac_channel(chan: int) -> str:
@@ -184,6 +194,7 @@ def load_csv(path: Path) -> PinMap:
                     alias=row[6].strip() if len(row) > 6 else "",
                     default_freq_hz=int(row[7].strip()) if len(row) > 7 and row[7].strip() else 0,
                     default_duty_pct=int(row[8].strip()) if len(row) > 8 and row[8].strip() else 0,
+                    polarity_low=parse_polarity(row[9]) if len(row) > 9 and row[9].strip() else 0,
                 )
             )
         elif section == "dac":
@@ -240,7 +251,8 @@ def render_c(pm: PinMap, source: Path) -> str:
             f"{tim_inst}, {c_string(row.tim.lower())}, {hal_channel(row.chan)}, "
             f"{port}, {hal_pin}, {af_const(row.tim, row.af)}, "
             f"{c_string(owner)}, {advanced}, {c_string(row.pin)}, "
-            f"{row.default_freq_hz}U, {row.default_duty_pct}U }},"
+            f"{row.default_freq_hz}U, {row.default_duty_pct}U, "
+            f"{row.polarity_low}U }},"
         )
 
     dac_rows: list[str] = []

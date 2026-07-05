@@ -75,6 +75,12 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 #define TARS_AWG_CH_STRIDE        (TARS_AWG_CH_MAX_POINTS * 2U)
 #define TARS_AWG_WAVE_SIZE        (2U * TARS_AWG_CH_STRIDE)
 
+/* --- USB shell command history (external SDRAM, RAM-only lifetime) --- */
+#define TARS_SHELL_HIST_BASE      0xD0150000UL
+#define TARS_SHELL_HIST_SLOTS     32U
+#define TARS_SHELL_HIST_SLOT_SIZE 128U
+#define TARS_SHELL_HIST_SIZE      (TARS_SHELL_HIST_SLOTS * TARS_SHELL_HIST_SLOT_SIZE)
+
 /* --- Scheduler --- */
 #define TARS_SCHED_SLICE_COUNT    8U
 #define TARS_SCHED_SLICE_MS       100U

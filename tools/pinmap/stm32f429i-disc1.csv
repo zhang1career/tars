@@ -8,20 +8,20 @@ signal,pin
 uart5_tx,pc12
 uart5_rx,pd2
 
-# PWM channels: any valid TIM+pin+AF the developer lists is accepted.
+# PWM channels: channel ID is pwmN where N follows (tim asc, chan asc, pin asc).
 # default_tenant: none|foc|system — boot default; runtime grant via
 # `mcu res grant <id> <tenant>` when idle.
 [pwm]
-# Optional trailing columns: default_freq_hz, default_duty_pct
-channel,tim,chan,pin,af,default_tenant,alias,default_freq_hz,default_duty_pct
-pwm0,tim1,1,pa8,AF1,none,,,
-pwm1,tim9,2,pe4,AF3,none,,,
-pwm2,tim9,2,pe6,AF3,none,,,
-pwm3,tim9,1,pe2,AF3,none,,,
-pwm4,tim10,1,pb8,AF3,none,,20000,50
-tim1_ch1,tim1,1,pa8,AF1,foc,,,
-tim1_ch2,tim1,2,pa9,AF1,foc,,,
-tim1_ch3,tim1,3,pa10,AF1,foc,,,
+# Optional trailing columns: default_freq_hz, default_duty_pct, polarity (high|low)
+channel,tim,chan,pin,af,default_tenant,alias,default_freq_hz,default_duty_pct,polarity
+pwm0,tim1,1,pa8,AF1,foc,,,
+pwm1,tim1,2,pa9,AF1,foc,,,
+pwm2,tim1,3,pa10,AF1,foc,,,
+pwm3,tim3,1,pb4,AF2,none,,20000,50,low
+pwm4,tim9,1,pe2,AF3,none,,,
+pwm5,tim9,2,pe4,AF3,none,,,
+pwm6,tim9,2,pe6,AF3,none,,,
+pwm7,tim10,1,pb8,AF3,none,,20000,50
 
 # DAC channels (STM32F429: PA4=DAC_OUT1, PA5=DAC_OUT2).
 [dac]
@@ -45,5 +45,6 @@ pd7,,none
 pa0,b1,none
 pa8,,none
 pb8,,none
+pb4,,none
 pa4,,none
 pa5,,none

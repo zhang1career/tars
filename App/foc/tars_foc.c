@@ -164,9 +164,9 @@ int TarsFoc_Enable(int enable)
       return 0;
     }
 
-    if ((TarsResMgr_Acquire("tim1_ch1") != 0) ||
-        (TarsResMgr_Acquire("tim1_ch2") != 0) ||
-        (TarsResMgr_Acquire("tim1_ch3") != 0))
+    if ((TarsResMgr_Acquire("pwm0") != 0) ||
+        (TarsResMgr_Acquire("pwm1") != 0) ||
+        (TarsResMgr_Acquire("pwm2") != 0))
     {
       s_enable = 0U;
       return 0;
@@ -176,9 +176,9 @@ int TarsFoc_Enable(int enable)
   else
   {
     __HAL_TIM_MOE_DISABLE(&htim1);
-    (void)TarsResMgr_Release("tim1_ch1");
-    (void)TarsResMgr_Release("tim1_ch2");
-    (void)TarsResMgr_Release("tim1_ch3");
+    (void)TarsResMgr_Release("pwm0");
+    (void)TarsResMgr_Release("pwm1");
+    (void)TarsResMgr_Release("pwm2");
   }
 #endif
   return 1;

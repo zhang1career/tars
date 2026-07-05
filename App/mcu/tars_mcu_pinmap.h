@@ -32,6 +32,7 @@ typedef struct {
   const char *pin_name;
   uint32_t default_freq_hz;
   uint8_t default_duty_pct;
+  uint8_t default_polarity_low;
 } tars_mcu_pwm_entry_t;
 
 typedef struct {

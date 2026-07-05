@@ -15,7 +15,7 @@ when idle (not **active**):
 ```
 mcu res list
 mcu res grant pwm0 gate_driver
-mcu res grant pwm4 bst_refresh
+mcu res grant pwm7 bst_refresh
 mcu res grant dac0 analog_out
 mcu res grant pg13 board_leds
 mcu res grant pwm0 none          # clear assignment
@@ -55,18 +55,25 @@ mcu pwm status pwm0
 mcu pwm enable pwm0 0
 ```
 
-TIM1 channels (`tim1_ch1` …) default to **foc**. Shell PWM on TIM1 is allowed
-after granting a tenant to `pwm0` and while the motor bridge is off.
+PWM IDs are **`pwmN`** in pin map order: `(tim, chan, pin)` ascending.
+Use `mcu spec pwmN` or `tools/pinmap/<board>.csv` to look up timer/channel/pin.
+
+TIM1 channels (**pwm0**–**pwm2**) default to **foc**. Shell PWM on TIM1 is
+allowed after granting a tenant to **pwm0** and while the motor bridge is off.
 
 Shared timers: all channels on the same TIM share one frequency (`mcu pwm freq tim9 …`).
 
-**pwm4** uses **TIM10** on **PB8** (Morpho CN12) at **20 kHz / 50%** by default:
+**pwm7** (TIM10 / PB8, Morpho CN12) and **pwm3** (TIM3 / PB4) default to **20 kHz / 50%**:
 
 ```
-mcu res grant pwm4 bst_refresh
-mcu pwm enable pwm4 1
-mcu pwm status pwm4
-mcu spec pwm4
+mcu res grant pwm7 bst_refresh
+mcu pwm enable pwm7 1
+mcu pwm status pwm7
+mcu spec pwm7
+
+mcu res grant pwm3 pwm
+mcu pwm enable pwm3 1
+mcu spec pwm3
 ```
 
 ## DAC

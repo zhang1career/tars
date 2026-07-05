@@ -168,6 +168,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # App layer
     ${CMAKE_SOURCE_DIR}/App/usb_otg.c
     ${CMAKE_SOURCE_DIR}/App/shell.c
+    ${CMAKE_SOURCE_DIR}/App/shell_hist.c
+    ${CMAKE_SOURCE_DIR}/Lib/ds/core/ring_index.c
+    ${CMAKE_SOURCE_DIR}/Lib/ds/profile/ring_stream.c
+    ${CMAKE_SOURCE_DIR}/Lib/ds/profile/ring_slots.c
     ${CMAKE_SOURCE_DIR}/App/tars_api.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_gpio.c
     ${CMAKE_SOURCE_DIR}/App/mcu/tars_mcu_pwm.c
@@ -228,6 +232,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # User include paths (see note above — owned by this file, survives regen).
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App
+    ${CMAKE_SOURCE_DIR}/Lib/ds/core
+    ${CMAKE_SOURCE_DIR}/Lib/ds/profile
     ${CMAKE_SOURCE_DIR}/App/lcd
     ${CMAKE_SOURCE_DIR}/App/mcu
     ${CMAKE_SOURCE_DIR}/App/resource
