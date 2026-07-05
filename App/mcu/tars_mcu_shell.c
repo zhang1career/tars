@@ -19,6 +19,11 @@ static int mcu_str_eq(const char *a, const char *b)
   return (strcmp(a, b) == 0) ? 1 : 0;
 }
 
+static int mcu_rest_wants_help(const char *rest)
+{
+  return ((rest == NULL) || (rest[0] == '\0') || (strcmp(rest, "help") == 0)) ? 1 : 0;
+}
+
 static void mcu_shell_help(char *out, uint32_t out_size)
 {
   if ((out == NULL) || (out_size == 0U))
@@ -38,7 +43,94 @@ static void mcu_shell_help(char *out, uint32_t out_size)
                  "  mcu gpio          GPIO read and write\r\n"
                  "  mcu pinmap        Pin and peripheral map\r\n"
                  "  mcu spec          Design and runtime specs\r\n"
-                 "try: mcu <subcmd> for usage\r\n");
+                 "try: mcu <subcmd> help for subcommand usage\r\n");
+}
+
+static void mcu_res_help(char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "mcu res commands:\r\n"
+                 "  list                 List pin-map resources and tenants\r\n"
+                 "  status <id>          Show resource tenant and active state\r\n"
+                 "  grant <id> <tenant>  Assign tenant (or none to clear)\r\n"
+                 "  save                 Persist grants and PWM profile to flash\r\n"
+                 "  load                 Restore grants and PWM profile from flash\r\n"
+                 "  clear                Erase persisted profile from flash\r\n"
+                 "  profile show         Show stored profile snapshot\r\n");
+}
+
+static void mcu_pwm_help(char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "mcu pwm commands:\r\n"
+                 "  list                 List PWM channels on this board\r\n"
+                 "  status <ch>          Show channel runtime state\r\n"
+                 "  enable <ch> <0|1>    Start or stop PWM output\r\n"
+                 "  duty <ch> <0-100>    Set duty cycle (%%)\r\n"
+                 "  freq <timN> <hz>     Set timer frequency (shared per TIM)\r\n"
+                 "  polarity <ch> [pol]  Query or set output polarity (high|low)\r\n"
+                 "  link ...             Phase-sync linked channels\r\n"
+                 "  persist <ch> [0|1]   Auto-enable channel on boot\r\n");
+}
+
+static void mcu_dac_help(char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "mcu dac commands:\r\n"
+                 "  list                 List DAC channels on this board\r\n"
+                 "  status <ch>          Show channel runtime state\r\n"
+                 "  enable <ch> <0|1>    Start or stop DAC output\r\n"
+                 "  value <ch> <0-100>   Set output level (%% of full scale)\r\n");
+}
+
+static void mcu_awg_help(char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "mcu awg commands:\r\n"
+                 "  status <ch>          Show channel waveform and playback state\r\n"
+                 "  gen <ch> <wave> ...  Generate built-in waveform into buffer\r\n"
+                 "  freq <ch> <hz>       Set output frequency\r\n"
+                 "  enable <ch> <0|1>    Start or stop waveform playback\r\n"
+                 "  link ...             Phase-sync linked channels\r\n");
+}
+
+static void mcu_gpio_help(char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  (void)snprintf(out,
+                 out_size,
+                 "mcu gpio commands:\r\n"
+                 "  list                      List GPIO pins on this board\r\n"
+                 "  read <pgNN|alias>         Read pin level\r\n"
+                 "  write <pgNN|alias> <0|1>  Write pin level (grant tenant first)\r\n");
 }
 
 static void mcu_shell_stub_status(const char *resource, char *out, uint32_t out_size)
@@ -121,6 +213,12 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
   {
     char id[24];
     char owner_text[16];
+
+    if (mcu_rest_wants_help(rest))
+    {
+      mcu_res_help(out, out_size);
+      return 1;
+    }
 
     if (mcu_str_eq(rest, "list"))
     {
@@ -243,7 +341,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       }
     }
 
-    (void)snprintf(out, out_size, "mcu res: use list|status|grant|save|load|clear|profile show\r\n");
+    mcu_res_help(out, out_size);
     return 1;
   }
 
@@ -261,9 +359,9 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    if ((rest[0] == '\0') || (mcu_str_eq(rest, "status")))
+    if (mcu_rest_wants_help(rest) || mcu_str_eq(rest, "status"))
     {
-      (void)snprintf(out, out_size, "mcu pwm: use list|status <ch>|enable|duty|freq|polarity|link|persist\r\n");
+      mcu_pwm_help(out, out_size);
       return 1;
     }
 
@@ -593,7 +691,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu pwm: use list|status|enable|duty|freq|polarity|link|persist\r\n");
+    mcu_pwm_help(out, out_size);
     return 1;
   }
 
@@ -610,9 +708,9 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    if ((rest[0] == '\0') || (mcu_str_eq(rest, "status")))
+    if (mcu_rest_wants_help(rest) || mcu_str_eq(rest, "status"))
     {
-      (void)snprintf(out, out_size, "mcu dac: use list|status <ch>|enable|value\r\n");
+      mcu_dac_help(out, out_size);
       return 1;
     }
 
@@ -721,7 +819,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu dac: use list|status|enable|value\r\n");
+    mcu_dac_help(out, out_size);
     return 1;
   }
 
@@ -730,9 +828,9 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
     char ch[24];
     unsigned long val = 0UL;
 
-    if ((rest[0] == '\0') || mcu_str_eq(rest, "status"))
+    if (mcu_rest_wants_help(rest) || mcu_str_eq(rest, "status"))
     {
-      (void)snprintf(out, out_size, "mcu awg: use status <ch>|gen|freq|enable|link\r\n");
+      mcu_awg_help(out, out_size);
       return 1;
     }
 
@@ -932,7 +1030,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out, out_size, "mcu awg: use status|gen|freq|enable|link\r\n");
+    mcu_awg_help(out, out_size);
     return 1;
   }
 
@@ -946,6 +1044,12 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
     {
       (void)snprintf(out, out_size, "mcu gpio list (%s):\r\n", TarsMcuPinmap_BoardId());
       TarsMcuPinmap_FormatGpioList(out + strlen(out), out_size - (uint32_t)strlen(out));
+      return 1;
+    }
+
+    if (mcu_rest_wants_help(rest))
+    {
+      mcu_gpio_help(out, out_size);
       return 1;
     }
 
@@ -1007,9 +1111,7 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
       return 1;
     }
 
-    (void)snprintf(out,
-                   out_size,
-                   "mcu gpio: use gpio write|read|list\r\n");
+    mcu_gpio_help(out, out_size);
     return 1;
   }
 
