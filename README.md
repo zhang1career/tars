@@ -7,7 +7,7 @@ Discovery board (`STM32F429I-DISC1`): USB CDC shell, LittleFS, **Lua 5.1** apps.
 ## Quick start
 
 ```bash
-cmake --preset Debug && cmake --build cmake-build-debug
+cmake --preset Release && cmake --build build/Release
 ./tools/flash.sh
 
 python3 tools/tars-pack.py lua tools/examples/hello.lua \
@@ -15,7 +15,7 @@ python3 tools/tars-pack.py lua tools/examples/hello.lua \
 python3 tools/tars-send.py installs/hello.tlua -p /dev/tty.usbmodemXXXX
 
 # serial shell (DTR on):
-gpio write 13 0       # LD3 on
+mcu gpio write pg13 0   # LD3 on
 app submit hello
 sched status
 sys top
@@ -23,8 +23,12 @@ sys top
 
 ## Docs
 
+- [MCU shell & pin map](docs/mcu-shell.md)
+- [Board config manifest](tools/config/README.md) (`board.json`, `config-query.py`, `mcu spec`)
+- [Probe (SCPI telemetry & capture)](docs/probe.md)
 - [App formats](docs/app-format.md)
 - [Flash layout](docs/flash-layout.md)
+- [SDRAM layout](docs/sdram-layout.md)
 - [Scheduling](docs/scheduling.md)
 - [OTA A/B](docs/ota.md) (stub, not MVP)
 

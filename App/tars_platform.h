@@ -27,6 +27,8 @@
 
 #define TARS_LFS_PATH_CATALOG     "/sys/catalog"
 #define TARS_LFS_PATH_APPS        "/apps"
+#define TARS_LFS_PATH_CONFIG      "/config"
+#define TARS_LFS_PATH_RES_PROFILE TARS_LFS_PATH_CONFIG "/res_profile.bin"
 
 /* --- OTA staging (future, Bank2 sectors 12-13) --- */
 #define TARS_OTA_FLASH_BASE       0x08100000UL
@@ -58,6 +60,27 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 #define TARS_LUA_HEAP_BASE        0xD00E0000UL
 #define TARS_LUA_HEAP_SIZE        (128U * 1024U)
 
+/* --- Probe capture buffer (external SDRAM) ---
+ * Trigger-capture stores high-rate samples here via DMA, then streams them
+ * out over UART. Lives above the Lua heap in the free SDRAM region. */
+#define TARS_PROBE_CAP_BASE       0xD0100000UL
+#define TARS_PROBE_CAP_SIZE       (256U * 1024U)
+
+/* --- Arbitrary waveform generator sample tables (external SDRAM) ---
+ * Per-channel uint16 sample buffers driven out of the DAC by TIM7-triggered
+ * circular DMA. Two channels (dac0/dac1) each get a fixed-stride region so a
+ * future two-channel XY mode can point both DMAs at contiguous tables. */
+#define TARS_AWG_WAVE_BASE        0xD0140000UL
+#define TARS_AWG_CH_MAX_POINTS    8192U
+#define TARS_AWG_CH_STRIDE        (TARS_AWG_CH_MAX_POINTS * 2U)
+#define TARS_AWG_WAVE_SIZE        (2U * TARS_AWG_CH_STRIDE)
+
+/* --- USB shell command history (external SDRAM, RAM-only lifetime) --- */
+#define TARS_SHELL_HIST_BASE      0xD0150000UL
+#define TARS_SHELL_HIST_SLOTS     32U
+#define TARS_SHELL_HIST_SLOT_SIZE 128U
+#define TARS_SHELL_HIST_SIZE      (TARS_SHELL_HIST_SLOTS * TARS_SHELL_HIST_SLOT_SIZE)
+
 /* --- Scheduler --- */
 #define TARS_SCHED_SLICE_COUNT    8U
 #define TARS_SCHED_SLICE_MS       100U
@@ -66,5 +89,8 @@ static inline uint32_t TarsNativeSlotSector(uint32_t slot_index)
 
 /* MVP: Lua apps only. Native .tapp install/run disabled until post-MVP. */
 #define TARS_MVP_LUA_ONLY         1
+
+/* Board pin map: tools/pinmap/<board>.csv -> generated/pinmap/ at build time. */
+#define TARS_BOARD_ID             "stm32f429i-disc1"
 
 #endif /* TARS_PLATFORM_H */

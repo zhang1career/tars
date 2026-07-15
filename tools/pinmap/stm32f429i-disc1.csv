@@ -1,0 +1,49 @@
+@board,stm32f429i-disc1
+@mcu,stm32f429
+@package,lqfp144
+
+# Peripheral signal routing (signal names are MCU-generic).
+[periph]
+signal,pin
+uart5_tx,pc12
+uart5_rx,pd2
+
+# PWM channels: channel ID is pwmN where N follows (tim asc, chan asc, pin asc).
+# Runtime tenant via `mcu res grant <id> <tenant>`; persisted with `mcu res save`.
+[pwm]
+# Optional trailing columns: default_freq_hz, default_duty_pct, polarity (high|low)
+channel,tim,chan,pin,af,alias,default_freq_hz,default_duty_pct,polarity
+pwm0,tim1,1,pa8,AF1,,,
+pwm1,tim1,2,pa9,AF1,,,
+pwm2,tim1,3,pa10,AF1,,,
+pwm3,tim3,1,pb4,AF2,,20000,50,low
+pwm4,tim9,1,pe2,AF3,,,
+pwm5,tim9,2,pe4,AF3,,,
+pwm6,tim9,2,pe6,AF3,,,
+pwm7,tim10,1,pb8,AF3,,20000,50
+
+# DAC channels (STM32F429: PA4=DAC_OUT1, PA5=DAC_OUT2).
+[dac]
+channel,pin,hal_chan,alias
+dac0,pa4,1,
+dac1,pa5,2,
+
+# GPIO pins exposed to shell/API.
+[gpio]
+pin,alias
+pg13,ld3
+pg14,ld4
+pe2,
+pe3,
+pe4,
+pe5,
+pe6,
+pd4,
+pd5,
+pd7,
+pa0,b1
+pa8,
+pb8,
+pb4,
+pa4,
+pa5,

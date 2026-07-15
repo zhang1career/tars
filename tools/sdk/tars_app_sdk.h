@@ -29,8 +29,10 @@ typedef struct {
 
 typedef struct {
   uint32_t api_version;
-  void (*gpio_write)(uint32_t pin_id, int value);
-  int (*gpio_read)(uint32_t pin_id);
+  void (*gpio_write)(const char *pin_name, int value);
+  int (*gpio_read)(const char *pin_name);
+  int (*pwm_enable)(const char *channel, int enable);
+  int (*pwm_duty)(const char *channel, float duty_pct);
   void (*sleep_ms)(uint32_t ms);
   void (*log)(const char *msg);
 } tars_api_t;

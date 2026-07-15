@@ -1,9 +1,14 @@
 #include "shell.h"
+#include "shell_hist.h"
+#include "ring_stream.h"
 #include "tars_lfs.h"
 #include "tars_vfs.h"
 #include "tars_ota.h"
 #include "tars_hal.h"
 #include "tars_sys.h"
+#include "tars_mcu.h"
+#include "tars_res_awg.h"
+#include "tars_foc.h"
 #include "usb_device.h"
 #include "usbd_cdc.h"
 #include "tars_app.h"
@@ -26,31 +31,39 @@ typedef enum {
   SHELL_MODE_BINARY = 1
 } shell_mode_t;
 
-static uint8_t s_rx_ring[SHELL_RX_RING_SIZE];
-static volatile uint32_t s_rx_head;
-static volatile uint32_t s_rx_tail;
+typedef enum {
+  SHELL_BIN_APP_INSTALL = 0,
+  SHELL_BIN_AWG_UPLOAD = 1
+} shell_bin_sink_t;
+
+static uint8_t s_rx_buf[SHELL_RX_RING_SIZE];
+static ring_stream_t s_rx_stream;
 static volatile uint8_t s_cdc_ready;
 
 static char s_line[SHELL_LINE_SIZE];
 static uint16_t s_line_len;
+static uint16_t s_line_cursor;
 static uint8_t s_prompt_pending = 1U;
+
+typedef enum {
+  SHELL_ESC_NONE = 0,
+  SHELL_ESC_SEEN,
+  SHELL_ESC_CSI
+} shell_esc_state_t;
+
+static shell_esc_state_t s_esc_state;
 
 static shell_mode_t s_mode;
 static uint32_t s_bin_target;
 static uint32_t s_bin_received;
 static int32_t s_bin_slot_hint;
 static uint8_t *s_bin_buf;
+static shell_bin_sink_t s_bin_sink;
+static char s_bin_awg_ch[8];
 
 static int shell_read_char(uint8_t *ch)
 {
-  if (s_rx_head == s_rx_tail)
-  {
-    return 0;
-  }
-
-  *ch = s_rx_ring[s_rx_tail];
-  s_rx_tail = (s_rx_tail + 1U) % SHELL_RX_RING_SIZE;
-  return 1;
+  return (ring_stream_pop(&s_rx_stream, ch) == 0) ? 1 : 0;
 }
 
 static uint8_t shell_usb_configured(void)
@@ -128,18 +141,7 @@ void Shell_CdcRxPush(const uint8_t *data, uint32_t len)
     return;
   }
 
-  for (i = 0U; i < len; i++)
-  {
-    uint32_t next = (s_rx_head + 1U) % SHELL_RX_RING_SIZE;
-
-    if (next == s_rx_tail)
-    {
-      break;
-    }
-
-    s_rx_ring[s_rx_head] = data[i];
-    s_rx_head = next;
-  }
+  (void)ring_stream_push_buf(&s_rx_stream, data, len);
 }
 
 uint8_t Shell_CdcIsReady(void)
@@ -213,7 +215,53 @@ static const char *shell_status_text(tars_status_t st)
   }
 }
 
-static void shell_finish_binary_install(void)
+/* STM32 USB device stack states (usbd_def.h). */
+static const char *shell_usb_state_text(uint8_t state)
+{
+  switch (state)
+  {
+  case 0x01U:
+    return "default";
+  case 0x02U:
+    return "addressed";
+  case 0x03U:
+    return "configured";
+  case 0x04U:
+    return "suspended";
+  default:
+    return "unknown";
+  }
+}
+
+static void shell_format_log_sinks(uint8_t sinks, char *out, uint32_t out_size)
+{
+  if ((out == NULL) || (out_size == 0U))
+  {
+    return;
+  }
+
+  if (sinks == 0U)
+  {
+    (void)snprintf(out, out_size, "none");
+    return;
+  }
+
+  out[0] = '\0';
+  if ((sinks & TARS_IO_SINK_CDC) != 0U)
+  {
+    (void)strncat(out, "cdc", out_size - strlen(out) - 1U);
+  }
+  if ((sinks & TARS_IO_SINK_LCD) != 0U)
+  {
+    if (out[0] != '\0')
+    {
+      (void)strncat(out, "+", out_size - strlen(out) - 1U);
+    }
+    (void)strncat(out, "lcd", out_size - strlen(out) - 1U);
+  }
+}
+
+static void shell_finish_binary(void)
 {
   char msg[64];
   tars_status_t st;
@@ -223,7 +271,21 @@ static void shell_finish_binary_install(void)
 
   if (s_bin_received != s_bin_target)
   {
-    shell_write_str("install: incomplete\r\n");
+    shell_write_str((s_bin_sink == SHELL_BIN_AWG_UPLOAD)
+                      ? "upload: incomplete\r\n"
+                      : "install: incomplete\r\n");
+    shell_show_prompt();
+    return;
+  }
+
+  if (s_bin_sink == SHELL_BIN_AWG_UPLOAD)
+  {
+    int ust = TarsResAwg_UploadComplete(s_bin_awg_ch);
+
+    (void)snprintf(msg, sizeof(msg), "upload: %s (%lu pts)\r\n",
+                   (ust == 0) ? "ok" : "err",
+                   (unsigned long)(s_bin_target / 2U));
+    shell_write_str(msg);
     shell_show_prompt();
     return;
   }
@@ -260,8 +322,32 @@ static void shell_begin_binary(uint32_t size, int32_t slot_hint)
   s_bin_target = size;
   s_bin_received = 0U;
   s_bin_slot_hint = slot_hint;
+  s_bin_sink = SHELL_BIN_APP_INSTALL;
   s_mode = SHELL_MODE_BINARY;
   shell_write_str("install: ready\r\n");
+}
+
+static void shell_begin_awg_upload(const char *channel, uint32_t points)
+{
+  uint8_t *buf = NULL;
+  uint32_t bytes = 0U;
+
+  if (TarsResAwg_UploadBegin(channel, points, &buf, &bytes) != 0 ||
+      buf == NULL || bytes == 0U)
+  {
+    shell_write_str("upload: rejected (check ch/points, stop channel first)\r\n");
+    return;
+  }
+
+  s_bin_buf = buf;
+  s_bin_target = bytes;
+  s_bin_received = 0U;
+  s_bin_slot_hint = -1;
+  s_bin_sink = SHELL_BIN_AWG_UPLOAD;
+  strncpy(s_bin_awg_ch, channel, sizeof(s_bin_awg_ch) - 1U);
+  s_bin_awg_ch[sizeof(s_bin_awg_ch) - 1U] = '\0';
+  s_mode = SHELL_MODE_BINARY;
+  shell_write_str("upload: ready\r\n");
 }
 
 static void shell_execute_line(void)
@@ -274,46 +360,78 @@ static void shell_execute_line(void)
     return;
   }
 
+  ShellHist_Push(s_line);
+
   if (shell_str_eq(s_line, "help"))
   {
     shell_write_str(
       "Commands:\r\n"
       "  help              Show this help\r\n"
-      "  status            Show USB role and link state\r\n"
+      "  history           List recent commands (history N for last N)\r\n"
+      "  status            USB role/CDC; state 1 default 2 addressed 3 configured 4 suspended\r\n"
       "  echo              Echo arguments\r\n"
-      "  gpio write <13|14> <0|1>  LD3/LD4 (0=on)\r\n"
-      "  gpio read <13|14> Read LD3/LD4 state\r\n"
-      "  app list          List installed apps\r\n"
-      "  app catalog       Show flash catalog status\r\n"
-      "  app slots         Show native slot map\r\n"
-      "  app install begin <size>  Receive .tlua blob (MVP)\r\n"
-      "  app submit <name> Register app for scheduling\r\n"
-      "  app revoke <name> Unregister app\r\n"
-      "  app uninstall <name> Remove app from catalog\r\n"
-      "  app run <name>    Run app once\r\n"
-      "  fs info           LittleFS partition status\r\n"
-      "  fs ls [path]      List directory (default /)\r\n"
-      "  fs df             Show free/used blocks\r\n"
-      "  fs stat <path>    File or directory metadata\r\n"
-      "  fs cat <path>     Print file (text, truncated)\r\n"
-      "  fs hex <path>     Hex dump of file (truncated)\r\n"
-      "  fs mkdir <path>   Create directory\r\n"
-      "  fs format         Erase and recreate LittleFS\r\n"
-      "  fs rm <path>      Remove file on LittleFS\r\n"
-      "  io log <cdc|lcd|both|none>  Route tars.log (default lcd)\r\n"
-      "  io status         Show I/O routing\r\n"
-      "  sched status      Scheduler timeslice + running app\r\n"
-      "  sys part          Show flash partition map\r\n"
-      "  sys top           RTOS/Lua heap + task list\r\n"
-      "  ota status        OTA A/B bank status (stub)\r\n"
-      "  hal status        WiFi/CAN/motor placeholder status\r\n");
+      "  mcu               On-chip hardware (try mcu help)\r\n"
+      "  app               Installed apps\r\n"
+      "  fs                LittleFS\r\n"
+      "  io                Log routing\r\n"
+      "  sched             Scheduler\r\n"
+      "  sys               Flash map / RTOS top\r\n"
+      "  ota               OTA status (stub)\r\n"
+      "  hal               HAL placeholders\r\n"
+      "  motor             FOC motor control\r\n");
+  }
+  else if (strncmp(s_line, "history", 7) == 0 &&
+           (s_line[7] == '\0' || s_line[7] == ' '))
+  {
+    uint32_t count = ShellHist_Count();
+    uint32_t limit = count;
+    const char *arg = s_line + 7;
+
+    if ((arg[0] == ' ') && (arg[1] != '\0'))
+    {
+      unsigned long n = strtoul(arg + 1, NULL, 0);
+
+      limit = (uint32_t)n;
+      if (limit > count)
+      {
+        limit = count;
+      }
+    }
+
+    if (count == 0U)
+    {
+      shell_write_str("history: (empty)\r\n");
+    }
+    else
+    {
+      uint32_t i;
+      char msg[SHELL_LINE_SIZE + 16U];
+
+      for (i = 0U; i < limit; i++)
+      {
+        uint32_t num = count - limit + i + 1U;
+        uint32_t age = limit - 1U - i;
+        const char *entry = ShellHist_Entry(age);
+
+        if (entry == NULL)
+        {
+          break;
+        }
+
+        (void)snprintf(msg, sizeof(msg), "  %lu  %s\r\n",
+                       (unsigned long)num, entry);
+        shell_write_str(msg);
+      }
+    }
   }
   else if (shell_str_eq(s_line, "status"))
   {
-    char msg[96];
-    (void)snprintf(msg, sizeof(msg),
-                   "role=device cdc=%s state=%lu\r\n",
+    char msg[128];
+    (void)snprintf(msg,
+                   sizeof(msg),
+                   "role=device cdc=%s state=%s (%lu)\r\n",
                    shell_usb_configured() ? "ready" : "down",
+                   shell_usb_state_text(hUsbDeviceHS.dev_state),
                    (unsigned long)hUsbDeviceHS.dev_state);
     shell_write_str(msg);
   }
@@ -322,47 +440,32 @@ static void shell_execute_line(void)
     shell_write_str(s_line + 5);
     shell_write_str("\r\n");
   }
-  else if (strncmp(s_line, "gpio write ", 11) == 0)
+  else if (strncmp(s_line, "mcu awg upload ", 15) == 0)
   {
-    const tars_api_t *api = TarsApp_GetApi();
-    unsigned long pin = 0UL;
-    unsigned long val = 0UL;
-    char msg[48];
+    char ch[8];
+    unsigned long points = 0UL;
 
-    if (sscanf(s_line + 11, "%lu %lu", &pin, &val) != 2)
+    if (sscanf(s_line + 15, "%7s %lu", ch, &points) != 2)
     {
-      shell_write_str("gpio write: use gpio write <13|14> <0|1>\r\n");
-    }
-    else if (api == NULL || api->gpio_write == NULL)
-    {
-      shell_write_str("gpio write: unavailable\r\n");
+      shell_write_str("upload: use mcu awg upload <ch> <points>\r\n");
     }
     else
     {
-      api->gpio_write((uint32_t)pin, (int)val);
-      (void)snprintf(msg, sizeof(msg), "gpio write: pin=%lu val=%lu\r\n", pin, val);
-      shell_write_str(msg);
+      shell_begin_awg_upload(ch, (uint32_t)points);
     }
   }
-  else if (strncmp(s_line, "gpio read ", 10) == 0)
+  else if (strncmp(s_line, "mcu", 3) == 0 && (s_line[3] == '\0' || s_line[3] == ' '))
   {
-    const tars_api_t *api = TarsApp_GetApi();
-    unsigned long pin = 0UL;
-    char msg[48];
+    char buffer[512];
+    const char *args = (s_line[3] == ' ') ? (s_line + 4) : "";
 
-    if (sscanf(s_line + 10, "%lu", &pin) != 1)
+    if (TarsMcu_ShellHandle(args, buffer, sizeof(buffer)) != 0)
     {
-      shell_write_str("gpio read: use gpio read <13|14>\r\n");
-    }
-    else if (api == NULL || api->gpio_read == NULL)
-    {
-      shell_write_str("gpio read: unavailable\r\n");
+      shell_write_str(buffer);
     }
     else
     {
-      int val = api->gpio_read((uint32_t)pin);
-      (void)snprintf(msg, sizeof(msg), "gpio read: pin=%lu val=%d\r\n", pin, val);
-      shell_write_str(msg);
+      shell_write_str("mcu: unknown subcommand (try mcu help)\r\n");
     }
   }
   else if (shell_str_eq(s_line, "app list"))
@@ -379,14 +482,14 @@ static void shell_execute_line(void)
     TarsStorage_GetCatalogDiag(&diag);
     (void)snprintf(msg, sizeof(msg),
                    "catalog: magic=0x%08lX entries=%lu stored_crc=0x%08lX "
-                   "computed_crc=0x%08lX validate=%d ram_entries=%lu lfs=%d\r\n",
+                   "computed_crc=0x%08lX validate=%s ram_entries=%lu lfs=%s\r\n",
                    (unsigned long)diag.magic,
                    (unsigned long)diag.entry_count,
                    (unsigned long)diag.stored_crc,
                    (unsigned long)diag.computed_crc,
-                   (int)diag.validate_status,
+                   shell_status_text(diag.validate_status),
                    (unsigned long)TarsStorage_GetEntryCount(),
-                   TarsLfs_IsMounted());
+                   TarsLfs_IsMounted() ? "mounted" : "down");
     shell_write_str(msg);
   }
   else if (shell_str_eq(s_line, "app slots"))
@@ -412,28 +515,28 @@ static void shell_execute_line(void)
   {
     char msg[64];
     tars_status_t st = TarsApp_Submit(s_line + 11);
-    (void)snprintf(msg, sizeof(msg), "submit: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "submit: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "app revoke ", 11) == 0)
   {
     char msg[64];
     tars_status_t st = TarsApp_Revoke(s_line + 11);
-    (void)snprintf(msg, sizeof(msg), "revoke: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "revoke: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "app uninstall ", 14) == 0)
   {
     char msg[64];
     tars_status_t st = TarsApp_Uninstall(s_line + 14);
-    (void)snprintf(msg, sizeof(msg), "uninstall: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "uninstall: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "app run ", 8) == 0)
   {
     char msg[64];
     tars_status_t st = TarsApp_RunOnce(s_line + 8);
-    (void)snprintf(msg, sizeof(msg), "run: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "run: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (shell_str_eq(s_line, "fs info"))
@@ -494,7 +597,7 @@ static void shell_execute_line(void)
   {
     char msg[64];
     tars_status_t st = TarsLfs_MkDir(s_line + 9);
-    (void)snprintf(msg, sizeof(msg), "fs mkdir: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "fs mkdir: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "fs ls", 5) == 0)
@@ -520,14 +623,14 @@ static void shell_execute_line(void)
   {
     char msg[64];
     tars_status_t st = TarsLfs_Format();
-    (void)snprintf(msg, sizeof(msg), "fs format: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "fs format: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "fs rm ", 6) == 0)
   {
     char msg[64];
     tars_status_t st = TarsLfs_RemoveFile(s_line + 6);
-    (void)snprintf(msg, sizeof(msg), "fs rm: %d\r\n", (int)st);
+    (void)snprintf(msg, sizeof(msg), "fs rm: %d (%s)\r\n", (int)st, shell_status_text(st));
     shell_write_str(msg);
   }
   else if (strncmp(s_line, "io log ", 7) == 0)
@@ -563,12 +666,14 @@ static void shell_execute_line(void)
   else if (shell_str_eq(s_line, "io status"))
   {
     char msg[96];
+    char sinks_text[16];
     uint8_t sinks = TarsVfs_GetLogSinks();
 
+    shell_format_log_sinks(sinks, sinks_text, sizeof(sinks_text));
     (void)snprintf(msg,
                    sizeof(msg),
-                   "io: log_sinks=0x%02X console=/dev/console lcd=/dev/lcd\r\n",
-                   (unsigned)sinks);
+                   "io: log_sinks=%s console=/dev/console lcd=/dev/lcd\r\n",
+                   sinks_text);
     shell_write_str(msg);
   }
   else if (shell_str_eq(s_line, "sys part"))
@@ -642,6 +747,60 @@ static void shell_execute_line(void)
     TarsHal_FormatStatus(msg, sizeof(msg));
     shell_write_str(msg);
   }
+  else if (strncmp(s_line, "motor", 5) == 0 && (s_line[5] == '\0' || s_line[5] == ' '))
+  {
+    const char *args = (s_line[5] == ' ') ? (s_line + 6) : "";
+
+    if (shell_str_eq(args, "enable"))
+    {
+      if (TarsFoc_Enable(1) != 0)
+      {
+        shell_write_str("motor: ENABLED (bridge live -- verify gate signals!)\r\n");
+      }
+      else
+      {
+        shell_write_str("motor: REFUSED (TIM1 held by shell PWM -- disable pwm0 first)\r\n");
+      }
+    }
+    else if (shell_str_eq(args, "disable"))
+    {
+      TarsFoc_Enable(0);
+      shell_write_str("motor: disabled (outputs tri-stated)\r\n");
+    }
+    else if (strncmp(args, "speed ", 6) == 0)
+    {
+      float rpm = (float)strtod(args + 6, NULL);
+      TarsFoc_SetSpeedRef(rpm);
+      char msg[48];
+      (void)snprintf(msg, sizeof(msg), "motor: speed_ref=%.1f rpm\r\n", (double)rpm);
+      shell_write_str(msg);
+    }
+    else if (shell_str_eq(args, "cal"))
+    {
+      TarsFoc_Calibrate();
+      shell_write_str("motor: calibrating zero-current offsets (bridge off)\r\n");
+    }
+    else if (shell_str_eq(args, "status") || args[0] == '\0')
+    {
+      tars_foc_snapshot_t s;
+      char msg[224];
+      TarsFoc_GetSnapshot(&s);
+      (void)snprintf(msg, sizeof(msg),
+                     "motor: %s ref=%.1f spd=%.1frpm id=%.2f iq=%.2f vdc=%.1f\r\n"
+                     "  ia=%.2f ib=%.2f ic=%.2f duty=%.2f/%.2f/%.2f theta=%.2f fault=%u\r\n",
+                     (s.enabled ? "ON " : "off"),
+                     (double)s.speed_ref_rpm, (double)s.speed_est_rpm,
+                     (double)s.id, (double)s.iq, (double)s.vdc,
+                     (double)s.ia, (double)s.ib, (double)s.ic,
+                     (double)s.duty_a, (double)s.duty_b, (double)s.duty_c,
+                     (double)s.theta_est_rad, (unsigned)s.fault_code);
+      shell_write_str(msg);
+    }
+    else
+    {
+      shell_write_str("motor: enable | disable | speed <rpm> | cal | status\r\n");
+    }
+  }
   else
   {
     shell_write_str("Unknown command. Type 'help'.\r\n");
@@ -655,11 +814,193 @@ static void shell_execute_line(void)
 
 static uint8_t shell_echo_enabled(void)
 {
-  return (strncmp(s_line, "app install begin ", 18) != 0) ? 1U : 0U;
+  if (strncmp(s_line, "app install begin ", 18) == 0)
+  {
+    return 0U;
+  }
+  if (strncmp(s_line, "mcu awg upload ", 15) == 0)
+  {
+    return 0U;
+  }
+  return 1U;
+}
+
+static void shell_line_redraw(void)
+{
+  uint16_t i;
+
+  if (!shell_echo_enabled())
+  {
+    return;
+  }
+
+  shell_write_str("\r");
+  shell_write_str(SHELL_PROMPT);
+  s_line[s_line_len] = '\0';
+  shell_write_str(s_line);
+  shell_write_str("\x1b[K");
+  for (i = s_line_cursor; i < s_line_len; i++)
+  {
+    shell_write_str("\b");
+  }
+}
+
+static void shell_set_line(const char *line)
+{
+  if ((line == NULL) || (line[0] == '\0'))
+  {
+    s_line[0] = '\0';
+    s_line_len = 0U;
+  }
+  else
+  {
+    (void)strncpy(s_line, line, SHELL_LINE_SIZE - 1U);
+    s_line[SHELL_LINE_SIZE - 1U] = '\0';
+    s_line_len = (uint16_t)strlen(s_line);
+  }
+
+  s_line_cursor = s_line_len;
+  shell_line_redraw();
+}
+
+static void shell_insert_char(char ch)
+{
+  ShellHist_ResetBrowse();
+
+  if (s_line_len >= (SHELL_LINE_SIZE - 1U))
+  {
+    return;
+  }
+
+  if (s_line_cursor == s_line_len)
+  {
+    s_line[s_line_len++] = ch;
+    s_line_cursor++;
+
+    if (shell_echo_enabled())
+    {
+      char out[2] = {ch, '\0'};
+      shell_write_str(out);
+    }
+  }
+  else
+  {
+    memmove(&s_line[s_line_cursor + 1U], &s_line[s_line_cursor],
+            (size_t)(s_line_len - s_line_cursor));
+    s_line[s_line_cursor] = ch;
+    s_line_len++;
+    s_line_cursor++;
+    shell_line_redraw();
+  }
+}
+
+static void shell_backspace(void)
+{
+  ShellHist_ResetBrowse();
+
+  if (s_line_cursor == 0U)
+  {
+    return;
+  }
+
+  memmove(&s_line[s_line_cursor - 1U], &s_line[s_line_cursor],
+          (size_t)(s_line_len - s_line_cursor));
+  s_line_len--;
+  s_line_cursor--;
+  shell_line_redraw();
+}
+
+static void shell_cursor_left(void)
+{
+  if (s_line_cursor == 0U)
+  {
+    return;
+  }
+
+  s_line_cursor--;
+
+  if (shell_echo_enabled())
+  {
+    shell_write_str("\b");
+  }
+}
+
+static void shell_cursor_right(void)
+{
+  if (s_line_cursor >= s_line_len)
+  {
+    return;
+  }
+
+  if (shell_echo_enabled())
+  {
+    char out[2] = {s_line[s_line_cursor], '\0'};
+    shell_write_str(out);
+  }
+
+  s_line_cursor++;
+}
+
+static void shell_handle_csi(char final)
+{
+  const char *hist_line;
+
+  switch (final)
+  {
+  case 'A':
+    if (ShellHist_Prev(&hist_line) == 0)
+    {
+      shell_set_line(hist_line);
+    }
+    break;
+  case 'B':
+    if (ShellHist_Next(&hist_line) == 0)
+    {
+      shell_set_line(hist_line);
+    }
+    break;
+  case 'C':
+    shell_cursor_right();
+    break;
+  case 'D':
+    shell_cursor_left();
+    break;
+  default:
+    break;
+  }
 }
 
 static void shell_handle_char(uint8_t ch)
 {
+  if (s_esc_state == SHELL_ESC_CSI)
+  {
+    if (((ch >= 0x40U) && (ch <= 0x7EU)) || (ch == '~'))
+    {
+      shell_handle_csi((char)ch);
+      s_esc_state = SHELL_ESC_NONE;
+    }
+    return;
+  }
+
+  if (s_esc_state == SHELL_ESC_SEEN)
+  {
+    if (ch == '[')
+    {
+      s_esc_state = SHELL_ESC_CSI;
+    }
+    else
+    {
+      s_esc_state = SHELL_ESC_NONE;
+    }
+    return;
+  }
+
+  if (ch == 0x1BU)
+  {
+    s_esc_state = SHELL_ESC_SEEN;
+    return;
+  }
+
   if (ch == '\r' || ch == '\n')
   {
     if (shell_echo_enabled())
@@ -669,33 +1010,19 @@ static void shell_handle_char(uint8_t ch)
 
     shell_execute_line();
     s_line_len = 0U;
+    s_line_cursor = 0U;
     return;
   }
 
   if (ch == 0x7FU || ch == 0x08U)
   {
-    if (s_line_len > 0U)
-    {
-      s_line_len--;
-
-      if (shell_echo_enabled())
-      {
-        shell_write_str("\b \b");
-      }
-    }
-
+    shell_backspace();
     return;
   }
 
-  if (ch >= 0x20U && s_line_len < (SHELL_LINE_SIZE - 1U))
+  if (ch >= 0x20U)
   {
-    s_line[s_line_len++] = (char)ch;
-
-    if (shell_echo_enabled())
-    {
-      char out[2] = {(char)ch, '\0'};
-      shell_write_str(out);
-    }
+    shell_insert_char((char)ch);
   }
 }
 
@@ -706,9 +1033,11 @@ void Shell_OnUsbConfigured(void)
 
 void Shell_Init(void)
 {
-  s_rx_head = 0U;
-  s_rx_tail = 0U;
+  ring_stream_init(&s_rx_stream, s_rx_buf, SHELL_RX_RING_SIZE);
+  ShellHist_Init();
   s_line_len = 0U;
+  s_line_cursor = 0U;
+  s_esc_state = SHELL_ESC_NONE;
   s_prompt_pending = 1U;
   s_cdc_ready = 0U;
   s_mode = SHELL_MODE_TEXT;
@@ -716,6 +1045,8 @@ void Shell_Init(void)
   s_bin_target = 0U;
   s_bin_received = 0U;
   s_bin_slot_hint = -1;
+  s_bin_sink = SHELL_BIN_APP_INSTALL;
+  s_bin_awg_ch[0] = '\0';
 }
 
 void Shell_Task(void const *argument)
@@ -750,7 +1081,7 @@ void Shell_Task(void const *argument)
           s_bin_received >= s_bin_target &&
           s_bin_target > 0U)
       {
-        shell_finish_binary_install();
+        shell_finish_binary();
       }
     }
     else

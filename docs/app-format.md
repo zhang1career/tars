@@ -38,7 +38,7 @@ Cooperative scheduling: `tars.yield()` between timeslices.
 
 ```
 app list | submit | revoke | uninstall | run
-gpio write 13 0          # LD3 on (dev board)
+mcu gpio write pg13 0     # LD3 on (dev board)
 fs ls /apps
 sys top
 ```
