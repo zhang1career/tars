@@ -34,7 +34,9 @@ typedef struct {
   const tars_mcu_pwm_entry_t *map;
   uint8_t duty_pct;
   uint8_t boot_enable;
+  uint8_t boot_complement;
   uint8_t running;
+  uint8_t complement_running;
   uint8_t polarity_low;
   uint8_t polarity_explicit;
   int8_t tim_slot;
@@ -234,10 +236,20 @@ static int pwm_find_ch_slot(const char *channel, int create)
   s_ch_pool[i].map = NULL;
   s_ch_pool[i].duty_pct = 0U;
   s_ch_pool[i].boot_enable = 0U;
+  s_ch_pool[i].boot_complement = 0U;
   s_ch_pool[i].running = 0U;
+  s_ch_pool[i].complement_running = 0U;
   s_ch_pool[i].polarity_low = 0U;
   s_ch_pool[i].polarity_explicit = 0U;
   s_ch_pool[i].tim_slot = -1;
+  {
+    const tars_mcu_pwm_entry_t *map = NULL;
+
+    if (TarsMcuPinmap_ResolvePwm(channel, &map) == 0)
+    {
+      s_ch_pool[i].map = map;
+    }
+  }
   return (int)i;
 }
 
@@ -475,6 +487,58 @@ static uint32_t pwm_oc_polarity_hal(uint8_t polarity_low)
 static const char *pwm_polarity_name(uint8_t polarity_low)
 {
   return (polarity_low != 0U) ? "low" : "high";
+}
+
+static uint8_t pwm_tim_any_output_active(TIM_TypeDef *tim)
+{
+  uint32_t i;
+
+  if (tim == NULL)
+  {
+    return 0U;
+  }
+
+  for (i = 0U; i < s_ch_count; i++)
+  {
+    if ((s_ch_pool[i].map != NULL) && (s_ch_pool[i].map->tim == tim))
+    {
+      if ((s_ch_pool[i].running != 0U) || (s_ch_pool[i].complement_running != 0U))
+      {
+        return 1U;
+      }
+    }
+  }
+
+  return 0U;
+}
+
+static void pwm_advanced_moe_sync(TIM_HandleTypeDef *htim)
+{
+  if ((htim == NULL) || (htim->Instance == NULL))
+  {
+    return;
+  }
+
+  if (pwm_tim_any_output_active(htim->Instance) != 0U)
+  {
+    __HAL_TIM_MOE_ENABLE(htim);
+  }
+  else
+  {
+    __HAL_TIM_MOE_DISABLE(htim);
+  }
+}
+
+static tars_pwm_ch_t *pwm_ch_slot(const char *channel, int create)
+{
+  int slot = pwm_find_ch_slot(channel, create);
+
+  if (slot < 0)
+  {
+    return NULL;
+  }
+
+  return &s_ch_pool[(uint32_t)slot];
 }
 
 static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_pct)
@@ -870,6 +934,86 @@ static int pwm_link_snap_follower(void)
   return pwm_link_snap_phase();
 }
 
+int TarsResPwm_SetComplement(const char *channel, int enable)
+{
+  const tars_mcu_pwm_entry_t *map = NULL;
+  tars_pwm_ch_t *ch;
+  TIM_HandleTypeDef *htim;
+
+  if (TarsMcuPinmap_ResolvePwm(channel, &map) != 0)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (map->advanced_tim == 0U)
+  {
+    return TARS_RES_ERR_SCOPE;
+  }
+
+  if (TarsResMgr_TenantAssigned(channel) == 0)
+  {
+    return TARS_RES_ERR_OWNER;
+  }
+
+  if ((enable != 0) && (pwm_foc_tim_active() != 0))
+  {
+    return TARS_RES_ERR_ACTIVE;
+  }
+
+  ch = pwm_ch_slot(channel, 0);
+  if (ch == NULL)
+  {
+    return (enable != 0) ? TARS_RES_ERR_ACTIVE : 0;
+  }
+
+  htim = pwm_tim_handle(map);
+  if (htim == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  if (enable != 0)
+  {
+    if (ch->running == 0U)
+    {
+      return TARS_RES_ERR_ACTIVE;
+    }
+
+    if (ch->complement_running != 0U)
+    {
+      return 0;
+    }
+
+    (void)HAL_TIMEx_PWMN_Stop(htim, map->hal_channel);
+    if (HAL_TIMEx_PWMN_Start(htim, map->hal_channel) != HAL_OK)
+    {
+      return TARS_RES_ERR_PARAM;
+    }
+
+    ch->complement_running = 1U;
+  }
+  else
+  {
+    if (ch->complement_running == 0U)
+    {
+      return 0;
+    }
+
+    (void)HAL_TIMEx_PWMN_Stop(htim, map->hal_channel);
+    ch->complement_running = 0U;
+  }
+
+  pwm_advanced_moe_sync(htim);
+  return 0;
+}
+
+int TarsResPwm_IsComplementRunning(const char *channel)
+{
+  tars_pwm_ch_t *ch = pwm_ch_slot(channel, 0);
+
+  return ((ch != NULL) && (ch->complement_running != 0U)) ? 1 : 0;
+}
+
 int TarsResPwm_Enable(const char *channel, int enable)
 {
   const tars_mcu_pwm_entry_t *map = NULL;
@@ -926,6 +1070,11 @@ int TarsResPwm_Enable(const char *channel, int enable)
 
   if (enable == 0)
   {
+    if (ch->complement_running != 0U)
+    {
+      (void)TarsResPwm_SetComplement(channel, 0);
+    }
+
     if (ch->running != 0U)
     {
       htim = pwm_tim_handle(map);
@@ -934,11 +1083,13 @@ int TarsResPwm_Enable(const char *channel, int enable)
         (void)HAL_TIM_PWM_Stop(htim, map->hal_channel);
         if (map->advanced_tim != 0U)
         {
-          char tenant[TARS_TENANT_LEN];
+          pwm_advanced_moe_sync(htim);
+          {
+            char tenant[TARS_TENANT_LEN];
 
-          __HAL_TIM_MOE_DISABLE(htim);
-          (void)TarsResMgr_GetTenant(channel, tenant, sizeof(tenant));
-          TarsResMgr_TimDomainRelease(map->tim_id, tenant);
+            (void)TarsResMgr_GetTenant(channel, tenant, sizeof(tenant));
+            TarsResMgr_TimDomainRelease(map->tim_id, tenant);
+          }
         }
       }
 
@@ -1024,7 +1175,7 @@ int TarsResPwm_Enable(const char *channel, int enable)
 
   if (map->advanced_tim != 0U)
   {
-    __HAL_TIM_MOE_ENABLE(htim);
+    pwm_advanced_moe_sync(htim);
   }
 
   pwm_apply_compare(htim, map->hal_channel, pwm_pulse_from_duty(htim, ch->duty_pct));
@@ -1271,7 +1422,7 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
   written = snprintf(out,
                      out_size,
                      "pwm: ch=%s pin=%s tim=%s tenant=%s active=%s drv=%s "
-                     "run=%u duty=%u%% pol=%s\r\n",
+                     "run=%u comp=%u duty=%u%% pol=%s\r\n",
                      map->channel,
                      map->pin_name,
                      map->tim_id ? map->tim_id : "?",
@@ -1279,6 +1430,7 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
                      TarsTenant_Display(active),
                      TarsTenant_Display(tim_drv),
                      (unsigned)((ch != NULL) ? ch->running : 0U),
+                     (unsigned)((ch != NULL) ? ch->complement_running : 0U),
                      (unsigned)((ch != NULL) ? ch->duty_pct : 0U),
                      pwm_polarity_name(pwm_ch_polarity_low(map, ch_slot)));
   if ((written < 0) || ((uint32_t)written >= out_size))
@@ -1339,40 +1491,67 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size)
 
 int TarsResPwm_SetPersist(const char *channel, int boot_enable)
 {
-  int ch_slot;
+  tars_pwm_ch_t *ch;
 
   if (channel == NULL)
   {
     return TARS_RES_ERR_PARAM;
   }
 
-  ch_slot = pwm_find_ch_slot(channel, 1);
-  if (ch_slot < 0)
+  ch = pwm_ch_slot(channel, 1);
+  if (ch == NULL)
   {
     return TARS_RES_ERR_PARAM;
   }
 
-  s_ch_pool[(uint32_t)ch_slot].boot_enable = (boot_enable != 0) ? 1U : 0U;
+  ch->boot_enable = (boot_enable != 0) ? 1U : 0U;
+  return 0;
+}
+
+int TarsResPwm_SetComplementPersist(const char *channel, int boot_complement)
+{
+  tars_pwm_ch_t *ch;
+
+  if (channel == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  ch = pwm_ch_slot(channel, 1);
+  if (ch == NULL)
+  {
+    return TARS_RES_ERR_PARAM;
+  }
+
+  ch->boot_complement = (boot_complement != 0) ? 1U : 0U;
   return 0;
 }
 
 int TarsResPwm_GetPersist(const char *channel, int *boot_enable_out)
 {
-  int ch_slot;
+  tars_pwm_ch_t *ch;
 
   if ((channel == NULL) || (boot_enable_out == NULL))
   {
     return TARS_RES_ERR_PARAM;
   }
 
-  ch_slot = pwm_find_ch_slot(channel, 0);
-  if (ch_slot < 0)
+  ch = pwm_ch_slot(channel, 0);
+  *boot_enable_out = (ch != NULL) ? (int)ch->boot_enable : 0;
+  return 0;
+}
+
+int TarsResPwm_GetComplementPersist(const char *channel, int *boot_complement_out)
+{
+  tars_pwm_ch_t *ch;
+
+  if ((channel == NULL) || (boot_complement_out == NULL))
   {
-    *boot_enable_out = 0;
-    return 0;
+    return TARS_RES_ERR_PARAM;
   }
 
-  *boot_enable_out = (int)s_ch_pool[(uint32_t)ch_slot].boot_enable;
+  ch = pwm_ch_slot(channel, 0);
+  *boot_complement_out = (ch != NULL) ? (int)ch->boot_complement : 0;
   return 0;
 }
 

@@ -120,6 +120,11 @@ int main(void)
    * can drive the Morpho pin when an ST-LINK is attached. */
   CLEAR_BIT(DBGMCU->CR, DBGMCU_CR_TRACE_IOEN);
 
+#if !TARS_FEATURE_LCD
+  /* Node Bus master: I2C2 on PB10/PB11 (LTDC frees these pins when LCD is off). */
+  MX_I2C2_Init();
+#endif
+
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */

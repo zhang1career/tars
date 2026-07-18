@@ -208,6 +208,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/tars_builtin_apps.c
     ${CMAKE_SOURCE_DIR}/App/apps/app_motor_ctl.c
     ${CMAKE_SOURCE_DIR}/App/tars_sys.c
+    # TARS Node Bus (I2C 下位机主控驱动)
+    ${CMAKE_SOURCE_DIR}/App/node_bus/tars_nodebus.c
+    ${CMAKE_SOURCE_DIR}/App/node_bus/tnb_crc.c
     # LCD entry-point stubs (active only when TARS_FEATURE_LCD=0)
     ${CMAKE_SOURCE_DIR}/App/lcd/lcd_stubs.c
     # USB Device (CDC) — not described by the .ioc, so kept here

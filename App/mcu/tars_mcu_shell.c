@@ -81,6 +81,8 @@ static void mcu_pwm_help(char *out, uint32_t out_size)
                  "  duty <ch> <0-100>    Set duty cycle (%%)\r\n"
                  "  freq <timN> <hz>     Set timer frequency (shared per TIM)\r\n"
                  "  polarity <ch> [pol]  Query or set output polarity (high|low)\r\n"
+                 "  complement <ch> [0|1]  Enable/disable CHxN (advanced TIM only)\r\n"
+                 "  complement persist <ch> [0|1]  Auto-enable complement on boot\r\n"
                  "  link ...             Phase-sync linked channels\r\n"
                  "  persist <ch> [0|1]   Auto-enable channel on boot\r\n");
 }
@@ -558,6 +560,105 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
                          "mcu pwm polarity: ch=%s pol=%s\r\n",
                          ch,
                          (low != 0) ? "low" : "high");
+        }
+      }
+      return 1;
+    }
+
+    if (strncmp(rest, "complement ", 11) == 0)
+    {
+      const char *args = rest + 11;
+
+      if (strncmp(args, "persist ", 8) == 0)
+      {
+        const char *pargs = args + 8;
+
+        if (sscanf(pargs, "%23s %lu", ch, &val) == 1)
+        {
+          int boot = 0;
+
+          if (TarsResPwm_GetComplementPersist(ch, &boot) != 0)
+          {
+            boot = 0;
+          }
+
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm complement persist: ch=%s boot=%d\r\n",
+                         ch,
+                         boot);
+          return 1;
+        }
+
+        if (sscanf(pargs, "%23s %lu", ch, &val) != 2)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm complement persist: use complement persist <ch> <0|1>\r\n");
+          return 1;
+        }
+
+        {
+          int st = TarsResPwm_SetComplementPersist(ch, (int)val);
+
+          if (st != 0)
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu pwm complement persist: ch=%s err=%s\r\n",
+                           ch,
+                           TarsMcu_ResErrText(st));
+          }
+          else
+          {
+            (void)snprintf(out,
+                           out_size,
+                           "mcu pwm complement persist: ch=%s boot=%lu\r\n",
+                           ch,
+                           val);
+          }
+        }
+        return 1;
+      }
+
+      if (sscanf(args, "%23s %lu", ch, &val) == 1)
+      {
+        int on = TarsResPwm_IsComplementRunning(ch);
+
+        (void)snprintf(out,
+                       out_size,
+                       "mcu pwm complement: ch=%s comp=%d\r\n",
+                       ch,
+                       on);
+        return 1;
+      }
+
+      if (sscanf(args, "%23s %lu", ch, &val) != 2)
+      {
+        (void)snprintf(out,
+                       out_size,
+                       "mcu pwm complement: use complement <ch> <0|1>\r\n");
+        return 1;
+      }
+
+      {
+        int st = TarsResPwm_SetComplement(ch, (int)val);
+
+        if (st != 0)
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm complement: ch=%s err=%s\r\n",
+                         ch,
+                         TarsMcu_ResErrText(st));
+        }
+        else
+        {
+          (void)snprintf(out,
+                         out_size,
+                         "mcu pwm complement: ch=%s comp=%lu\r\n",
+                         ch,
+                         val);
         }
       }
       return 1;

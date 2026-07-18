@@ -41,7 +41,10 @@ extern I2C_HandleTypeDef hi2c3;
 void MX_I2C3_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+/* Node Bus master (motor build): I2C2 on PB10=SCL / PB11=SDA. Not in .ioc —
+ * those pins are LTDC_G4/G5 when TARS_FEATURE_LCD=1. */
+extern I2C_HandleTypeDef hi2c2;
+void MX_I2C2_Init(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

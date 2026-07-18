@@ -10,11 +10,17 @@ int TarsResPwm_GetStatus(const char *channel, char *out, uint32_t out_size);
 
 int TarsResPwm_SetPersist(const char *channel, int boot_enable);
 int TarsResPwm_GetPersist(const char *channel, int *boot_enable_out);
+int TarsResPwm_SetComplementPersist(const char *channel, int boot_complement);
+int TarsResPwm_GetComplementPersist(const char *channel, int *boot_complement_out);
 int TarsResPwm_GetDuty(const char *channel, uint8_t *duty_out);
 int TarsResPwm_GetTimFreq(const char *tim_id, uint32_t *freq_hz_out);
 int TarsResPwm_TimFreqConfigured(const char *tim_id);
 
 int TarsResPwm_IsRunning(const char *channel);
+
+/* Advanced-timer complementary output (CHxN). Requires main channel running. */
+int TarsResPwm_SetComplement(const char *channel, int enable);
+int TarsResPwm_IsComplementRunning(const char *channel);
 
 int TarsResPwm_ParsePolarity(const char *name, int *low_out);
 int TarsResPwm_SetPolarity(const char *channel, int low);

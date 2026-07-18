@@ -8,6 +8,7 @@
  * 6-channel complementary PWM needs pins that the on-board LCD owns
  * (PA6/PA8 + PB0/PB1 via LTDC/I2C3), so the LCD stack (LTDC + DMA2D + SPI5 +
  * I2C3) is compiled OUT by default and those pins are freed for the inverter.
+ * PB10/PB11 (LTDC_G4/G5) are likewise freed and used as I2C2 for Node Bus.
  *
  * The LCD source is NOT deleted — it is gated behind TARS_FEATURE_LCD so a
  * future display build can re-enable it with:

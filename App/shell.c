@@ -9,6 +9,7 @@
 #include "tars_mcu.h"
 #include "tars_res_awg.h"
 #include "tars_foc.h"
+#include "node_bus/tars_nodebus.h"
 #include "usb_device.h"
 #include "usbd_cdc.h"
 #include "tars_app.h"
@@ -378,7 +379,8 @@ static void shell_execute_line(void)
       "  sys               Flash map / RTOS top\r\n"
       "  ota               OTA status (stub)\r\n"
       "  hal               HAL placeholders\r\n"
-      "  motor             FOC motor control\r\n");
+      "  motor             FOC motor control\r\n"
+      "  nodebus           I2C Node Bus (try nodebus scan)\r\n");
   }
   else if (strncmp(s_line, "history", 7) == 0 &&
            (s_line[7] == '\0' || s_line[7] == ' '))
@@ -800,6 +802,15 @@ static void shell_execute_line(void)
     {
       shell_write_str("motor: enable | disable | speed <rpm> | cal | status\r\n");
     }
+  }
+  else if (strncmp(s_line, "nodebus", 7) == 0 &&
+           (s_line[7] == '\0' || s_line[7] == ' '))
+  {
+    char buffer[512];
+    const char *args = (s_line[7] == ' ') ? (s_line + 8) : "";
+
+    TarsNodeBus_ShellCmd(args, buffer, sizeof(buffer));
+    shell_write_str(buffer);
   }
   else
   {

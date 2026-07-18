@@ -32,7 +32,7 @@ typedef struct __attribute__((packed)) {
   uint8_t  duty_pct;
   uint8_t  boot_enable;
   uint8_t  polarity_low;
-  uint8_t  reserved;
+  uint8_t  boot_complement;
 } tars_prof_pwm_t;
 
 typedef struct __attribute__((packed)) {
@@ -244,6 +244,7 @@ static int profile_collect_pwm(tars_prof_pwm_t *out, uint32_t *count_out)
   {
     const char *ch = table[i].channel;
     int persist = 0;
+    int comp_persist = 0;
     int polarity_low = 0;
     uint8_t duty = 0U;
 
@@ -257,6 +258,11 @@ static int profile_collect_pwm(tars_prof_pwm_t *out, uint32_t *count_out)
       persist = 0;
     }
 
+    if (TarsResPwm_GetComplementPersist(ch, &comp_persist) != 0)
+    {
+      comp_persist = 0;
+    }
+
     if (TarsResPwm_GetDuty(ch, &duty) != 0)
     {
       duty = 0U;
@@ -267,7 +273,7 @@ static int profile_collect_pwm(tars_prof_pwm_t *out, uint32_t *count_out)
       polarity_low = (int)table[i].default_polarity_low;
     }
 
-    if ((duty == 0U) && (persist == 0))
+    if ((duty == 0U) && (persist == 0) && (comp_persist == 0))
     {
       continue;
     }
@@ -282,7 +288,7 @@ static int profile_collect_pwm(tars_prof_pwm_t *out, uint32_t *count_out)
     out[n].duty_pct = duty;
     out[n].boot_enable = (persist != 0) ? 1U : 0U;
     out[n].polarity_low = (polarity_low != 0) ? 1U : 0U;
-    out[n].reserved = 0U;
+    out[n].boot_complement = (comp_persist != 0) ? 1U : 0U;
     n++;
   }
 
@@ -612,6 +618,8 @@ int TarsResProfile_Apply(void)
     (void)TarsResPwm_SetPolarity(s_staged.pwm[i].channel, (int)s_staged.pwm[i].polarity_low);
     (void)TarsResPwm_SetDuty(s_staged.pwm[i].channel, (float)s_staged.pwm[i].duty_pct);
     (void)TarsResPwm_SetPersist(s_staged.pwm[i].channel, (int)s_staged.pwm[i].boot_enable);
+    (void)TarsResPwm_SetComplementPersist(s_staged.pwm[i].channel,
+                                          (int)s_staged.pwm[i].boot_complement);
   }
 
   for (i = 0U; i < s_staged.hdr.pwm_count; i++)
@@ -641,6 +649,15 @@ int TarsResProfile_Apply(void)
     {
       st = TarsResPwm_Enable(s_staged.pwm[i].channel, 1);
       (void)st;
+    }
+  }
+
+  for (i = 0U; i < s_staged.hdr.pwm_count; i++)
+  {
+    if ((s_staged.pwm[i].boot_complement != 0U) &&
+        (TarsResPwm_IsRunning(s_staged.pwm[i].channel) != 0))
+    {
+      (void)TarsResPwm_SetComplement(s_staged.pwm[i].channel, 1);
     }
   }
 
@@ -801,10 +818,11 @@ int TarsResProfile_FormatStored(char *out, uint32_t out_size)
     written = (int)strlen(out);
     (void)snprintf(out + (uint32_t)written,
                    out_size - (uint32_t)written,
-                   "  pwm %s duty=%u boot=%u pol=%s\r\n",
+                   "  pwm %s duty=%u boot=%u comp_boot=%u pol=%s\r\n",
                    s_staged.pwm[i].channel,
                    (unsigned)s_staged.pwm[i].duty_pct,
                    (unsigned)s_staged.pwm[i].boot_enable,
+                   (unsigned)s_staged.pwm[i].boot_complement,
                    (s_staged.pwm[i].polarity_low != 0U) ? "low" : "high");
   }
 

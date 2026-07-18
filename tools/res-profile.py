@@ -18,7 +18,7 @@ _spec.loader.exec_module(_mod)
 tars_crc32 = _mod.tars_crc32
 
 TRSP_MAGIC = 0x54525350
-TRSP_VERSION = 3
+TRSP_VERSION = 5
 TFWK_MAGIC = 0x5446574B
 BOARD_ID_LEN = 24
 ID_LEN = 16
@@ -74,7 +74,12 @@ def pack_profile(doc: dict, fw_crc32: int, fw_size: int) -> bytes:
         body += struct.pack(
             PWM_FMT,
             p["channel"].encode(),
-            bytes([p["duty"], p.get("boot_enable", 0), 0, 0]),
+            bytes([
+                p["duty"],
+                p.get("boot_enable", 0),
+                p.get("polarity_low", 0),
+                p.get("boot_complement", 0),
+            ]),
         )
     for t in tim:
         body += struct.pack(TIM_FMT, t["tim_id"].encode(), t["freq_hz"])
@@ -131,6 +136,8 @@ def unpack_profile(data: bytes) -> dict:
                 "channel": ch.split(b"\0", 1)[0].decode(),
                 "duty": rest[0],
                 "boot_enable": rest[1],
+                "polarity_low": rest[2],
+                "boot_complement": rest[3],
             }
         )
 
@@ -186,7 +193,8 @@ def cmd_dump(args: argparse.Namespace) -> int:
     for g in doc["grants"]:
         print(f"  grant {g['id']} -> {g['tenant']}")
     for p in doc["pwm"]:
-        print(f"  pwm {p['channel']} duty={p['duty']} boot={p['boot_enable']}")
+        print(f"  pwm {p['channel']} duty={p['duty']} boot={p['boot_enable']} "
+              f"comp_boot={p.get('boot_complement', 0)} pol={'low' if p.get('polarity_low') else 'high'}")
     for t in doc["tim"]:
         print(f"  tim {t['tim_id']} freq={t['freq_hz']}")
     return 0

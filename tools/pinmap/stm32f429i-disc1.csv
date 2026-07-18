@@ -7,6 +7,9 @@
 signal,pin
 uart5_tx,pc12
 uart5_rx,pd2
+# Node Bus master (I2C2). Motor build only — LCD variant uses these as LTDC_G4/G5.
+i2c2_scl,pb10
+i2c2_sda,pb11
 
 # PWM channels: channel ID is pwmN where N follows (tim asc, chan asc, pin asc).
 # Runtime tenant via `mcu res grant <id> <tenant>`; persisted with `mcu res save`.

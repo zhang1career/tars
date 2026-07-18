@@ -28,11 +28,11 @@
  * agree. Center-aligned: Fpwm = Ftim / (2*ARR), so ARR = Ftim / (2*Fpwm).
  *   Ftim = APB2 timer clock = 72 MHz; Fpwm = 20 kHz -> ARR = 1800.
  *   RepetitionCounter = 1 -> one update (ADC trigger + control tick) / period.
- * Dead time is a PLACEHOLDER (~1 us): DTG ~ deadtime / tDTS, tDTS = 1/72MHz.
- * Tune TARS_FOC_TIM1_DEADTIME to your gate driver before driving a motor. */
+ * Dead time for external half-bridge (UCC27211 + AOD4184): DTG ticks @ 72 MHz tDTS.
+ * 216 ticks ~ 3.0 us — conservative vs sim DT=150 ns + gate Rg; tune if needed. */
 #define TARS_FOC_TIM1_CLK_HZ     72000000U
 #define TARS_FOC_TIM1_ARR        (TARS_FOC_TIM1_CLK_HZ / (2U * FOC_PARAM_FPWM_HZ))
-#define TARS_FOC_TIM1_DEADTIME   72U     /* ~1.0 us @ 72 MHz tDTS (placeholder) */
+#define TARS_FOC_TIM1_DEADTIME   216U    /* ~3.0 us @ 72 MHz tDTS */
 /* USER CODE END 0 */
 
 TIM_HandleTypeDef htim1;
@@ -106,8 +106,8 @@ void MX_TIM1_Init(void)
     Error_Handler();
   }
 
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_ENABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_ENABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
   sBreakDeadTimeConfig.DeadTime = TARS_FOC_TIM1_DEADTIME;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_ENABLE;
