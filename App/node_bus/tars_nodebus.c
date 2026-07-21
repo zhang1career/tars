@@ -11,7 +11,7 @@
  * 总线：DISC1 电机版 I2C2（PB10=SCL, PB11=SDA），见 MX_I2C2_Init / pinmap。
  */
 
-#define NB_TIMEOUT_MS   50U
+#define NB_TIMEOUT_MS   200U
 
 static I2C_HandleTypeDef *s_hi2c;
 static tars_node_t        s_nodes[TARS_NODEBUS_MAX_NODES];
@@ -24,32 +24,141 @@ void TarsNodeBus_Init(I2C_HandleTypeDef *hi2c)
   s_count = 0U;
 }
 
+/*
+ * After a timed-out HAL transfer, I2C2 can sit BUSY with SB/START pending and
+ * both lines driven low. Cube MspDeInit only knows I2C3, so recover via
+ * MX_I2C2_BusRelease + 9 SCL clocks (unwedge soft slaves) + re-init.
+ */
+static void nb_bus_recover(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+  uint8_t i;
+
+  MX_I2C2_BusRelease();
+  gpio.Pin = GPIO_PIN_10 | GPIO_PIN_11;
+  gpio.Mode = GPIO_MODE_OUTPUT_OD;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &gpio);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10 | GPIO_PIN_11, GPIO_PIN_SET);
+  for (i = 0U; i < 9U; i++)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+    HAL_Delay(1);
+  }
+  MX_I2C2_Init();
+  TarsNodeBus_Init(&hi2c2);
+}
+
+static uint8_t nb_bus_needs_recover(void)
+{
+  uint32_t idr;
+
+  if (s_hi2c == NULL)
+  {
+    return 0U;
+  }
+  idr = GPIOB->IDR;
+  if (__HAL_I2C_GET_FLAG(s_hi2c, I2C_FLAG_BUSY) != RESET)
+  {
+    return 1U;
+  }
+  if (s_hi2c->State != HAL_I2C_STATE_READY)
+  {
+    return 1U;
+  }
+  /* Idle bus must be high; low while "idle" means a stuck driver. */
+  if ((((idr >> 10) & 1U) == 0U) || (((idr >> 11) & 1U) == 0U))
+  {
+    return 1U;
+  }
+  return 0U;
+}
+
+static void nb_bus_ensure(void)
+{
+  if (nb_bus_needs_recover() != 0U)
+  {
+    nb_bus_recover();
+  }
+}
+
+/* AF (NACK) is normal when probing empty addresses — do not bit-bang recover
+ * (9 SCL clocks desync the soft-I2C slave that is still on the bus). */
+static void nb_clear_af(void)
+{
+  if ((s_hi2c != NULL) && (s_hi2c->ErrorCode == HAL_I2C_ERROR_AF))
+  {
+    s_hi2c->ErrorCode = HAL_I2C_ERROR_NONE;
+    if (s_hi2c->State != HAL_I2C_STATE_READY)
+    {
+      s_hi2c->State = HAL_I2C_STATE_READY;
+    }
+  }
+}
+
+static tars_status_t nb_after_hal_fail(void)
+{
+  if ((s_hi2c != NULL) && (s_hi2c->ErrorCode == HAL_I2C_ERROR_AF))
+  {
+    nb_clear_af();
+    return TARS_ERR_STATE;
+  }
+  nb_bus_recover();
+  return TARS_ERR_STATE;
+}
+
 /* ---- 底层寄存器读写 ---- */
 tars_status_t TarsNodeBus_ReadReg(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
+  uint16_t dev = (uint16_t)(addr << 1);
+
   if ((s_hi2c == NULL) || (buf == NULL))
   {
     return TARS_ERR_PARAM;
   }
-  if (HAL_I2C_Mem_Read(s_hi2c, (uint16_t)(addr << 1), reg,
-                       I2C_MEMADD_SIZE_8BIT, buf, len, NB_TIMEOUT_MS) != HAL_OK)
+  nb_bus_ensure();
+  /*
+   * Soft-I2C LITE (ATtiny): Repeated-START inside one slave poll is ideal,
+   * but older firmware missed Sr. Fallback = pointer write + STOP + read,
+   * with a short gap so the slave re-enters SoftI2c_Poll before the next START.
+   */
+  if (HAL_I2C_Master_Transmit(s_hi2c, dev, &reg, 1U, NB_TIMEOUT_MS) != HAL_OK)
   {
-    return TARS_ERR_STATE;
+    return nb_after_hal_fail();
+  }
+  HAL_Delay(5);
+  if (HAL_I2C_Master_Receive(s_hi2c, dev, buf, len, NB_TIMEOUT_MS) != HAL_OK)
+  {
+    return nb_after_hal_fail();
   }
   return TARS_OK;
 }
 
 tars_status_t TarsNodeBus_WriteReg(uint8_t addr, uint8_t reg, const uint8_t *buf, uint16_t len)
 {
-  if (s_hi2c == NULL)
+  uint8_t frame[17];
+  uint16_t i;
+  uint16_t dev = (uint16_t)(addr << 1);
+
+  if ((s_hi2c == NULL) || ((len > 0U) && (buf == NULL)) || (len > 16U))
   {
     return TARS_ERR_PARAM;
   }
-  if (HAL_I2C_Mem_Write(s_hi2c, (uint16_t)(addr << 1), reg,
-                        I2C_MEMADD_SIZE_8BIT, (uint8_t *)buf, len, NB_TIMEOUT_MS) != HAL_OK)
+  nb_bus_ensure();
+  /* One START/STOP write: [reg || payload]. Slave buffers bytes until STOP. */
+  frame[0] = reg;
+  for (i = 0U; i < len; i++)
   {
-    return TARS_ERR_STATE;
+    frame[1U + i] = buf[i];
   }
+  if (HAL_I2C_Master_Transmit(s_hi2c, dev, frame, (uint16_t)(1U + len), NB_TIMEOUT_MS) != HAL_OK)
+  {
+    return nb_after_hal_fail();
+  }
+  HAL_Delay(2);
   return TARS_OK;
 }
 
@@ -86,13 +195,10 @@ static uint8_t alloc_addr(uint8_t preferred)
   return 0U; /* 无可用地址 */
 }
 
-/* ---- ARP 枚举 ---- */
+/* ---- 枚举（LITE：仅静态扫描；ARP 会打乱 soft-I2C） ---- */
 int TarsNodeBus_Enumerate(void)
 {
-  uint8_t gc = TNB_GC_ARP_PREPARE;
-  uint8_t rec[TNB_UDID_LEN + 2];
-  uint8_t asg[TNB_UDID_LEN + 2];
-  uint8_t guard;
+  uint8_t a;
 
   if (s_hi2c == NULL)
   {
@@ -101,114 +207,48 @@ int TarsNodeBus_Enumerate(void)
 
   memset(s_nodes, 0, sizeof(s_nodes));
   s_count = 0U;
+  nb_bus_ensure();
 
-  /* 1. General Call 让所有节点回到未解析 */
-  (void)HAL_I2C_Master_Transmit(s_hi2c, (uint16_t)(TNB_ADDR_GENERAL_CALL << 1),
-                                &gc, 1U, NB_TIMEOUT_MS);
-  HAL_Delay(2);
-
-  /* 2. 逐个仲裁读 UDID 并分配地址 */
-  for (guard = 0U; guard < TARS_NODEBUS_MAX_NODES; guard++)
+  /*
+   * Skip General-Call / ARP for now: LITE ignores them, and the NACK +
+   * recover sequence desyncs ATtiny soft-I2C before identity reads succeed.
+   *
+   * Prefer IsDeviceReady (same as probe) before touching ReadReg — empty-addr
+   * Master_Transmit storms were still upsetting the soft slave.
+   */
+  /*
+   * Two-phase scan (matches `probe` behavior):
+   *  1) IsDeviceReady sweep — only HAL_OK counts (TIMEOUT/NACK ignored)
+   *  2) ReadIdentity only on ACKed addresses
+   * Trying ReadReg/Identity on empty slots desyncs soft-I2C.
+   */
+  for (a = TNB_ADDR_RUNTIME_BASE; a <= TNB_ADDR_RUNTIME_MAX; a++)
   {
-    uint8_t pref;
-    uint8_t assigned;
+    tars_node_t probe;
 
-    if (HAL_I2C_Master_Receive(s_hi2c, (uint16_t)(TNB_ADDR_ARP << 1),
-                               rec, sizeof(rec), NB_TIMEOUT_MS) != HAL_OK)
+    if (HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 1U, 20U) != HAL_OK)
     {
-      break; /* NACK：无更多未解析节点 */
+      nb_clear_af();
+      continue;
     }
-
-    /* 校验 PEC */
-    if (TnbCrc_Buf(0U, rec, TNB_UDID_LEN + 1U) != rec[TNB_UDID_LEN + 1U])
-    {
-      continue; /* 数据损坏，跳过本轮 */
-    }
-
-    pref = rec[TNB_UDID_LEN];
-    assigned = alloc_addr(pref);
-    if (assigned == 0U)
-    {
-      break;
-    }
-
-    memcpy(asg, rec, TNB_UDID_LEN);
-    asg[TNB_UDID_LEN] = assigned;
-    asg[TNB_UDID_LEN + 1U] = TnbCrc_Buf(0U, asg, TNB_UDID_LEN + 1U);
-    if (HAL_I2C_Master_Transmit(s_hi2c, (uint16_t)(TNB_ADDR_ARP << 1),
-                                asg, sizeof(asg), NB_TIMEOUT_MS) != HAL_OK)
+    /* Let soft-I2C leave any partial txn from the ready probe before identity. */
+    HAL_Delay(5);
+    memset(&probe, 0, sizeof(probe));
+    if (TarsNodeBus_ReadIdentity(a, &probe) != TARS_OK)
     {
       continue;
     }
-
-    /* 记录节点（身份细节稍后精读） */
-    s_nodes[s_count].addr = assigned;
-    s_nodes[s_count].board_id = rec[8];
-    memcpy(s_nodes[s_count].uid, &rec[10], 6); /* UDID 尾 6 字节 */
-    s_nodes[s_count].present = 1U;
+    if (probe.vendor_id != TNB_VENDOR_TARS)
+    {
+      continue;
+    }
+    if (s_count >= TARS_NODEBUS_MAX_NODES)
+    {
+      break;
+    }
+    s_nodes[s_count] = probe;
+    s_nodes[s_count].conflict = 0U;
     s_count++;
-  }
-
-  /* 3. ARP 节点精读身份 */
-  {
-    uint8_t i;
-    for (i = 0U; i < s_count; i++)
-    {
-      (void)TarsNodeBus_ReadIdentity(s_nodes[i].addr, &s_nodes[i]);
-    }
-  }
-
-  /* 4. 静态扫描：纳入 lite / 未参与 ARP 的节点；冲突不覆盖 */
-  {
-    uint8_t a;
-    for (a = TNB_ADDR_RUNTIME_BASE; a <= TNB_ADDR_RUNTIME_MAX; a++)
-    {
-      tars_node_t probe;
-      const tars_node_t *exist;
-
-      if (HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 2U, NB_TIMEOUT_MS) != HAL_OK)
-      {
-        continue;
-      }
-      memset(&probe, 0, sizeof(probe));
-      if (TarsNodeBus_ReadIdentity(a, &probe) != TARS_OK)
-      {
-        continue;
-      }
-      if (probe.vendor_id != TNB_VENDOR_TARS)
-      {
-        continue;
-      }
-
-      exist = TarsNodeBus_Find(a);
-      if (exist != NULL)
-      {
-        /* ARP 优先：仅在身份明显不一致时打 conflict */
-        if ((exist->board_id != probe.board_id) ||
-            (exist->product_id != probe.product_id) ||
-            (memcmp(exist->uid, probe.uid, 12) != 0))
-        {
-          uint8_t i;
-          for (i = 0U; i < s_count; i++)
-          {
-            if (s_nodes[i].addr == a)
-            {
-              s_nodes[i].conflict = 1U;
-              break;
-            }
-          }
-        }
-        continue;
-      }
-
-      if (s_count >= TARS_NODEBUS_MAX_NODES)
-      {
-        break;
-      }
-      s_nodes[s_count] = probe;
-      s_nodes[s_count].conflict = 0U;
-      s_count++;
-    }
   }
 
   return (int)s_count;
@@ -243,16 +283,20 @@ tars_status_t TarsNodeBus_ReadIdentity(uint8_t addr, tars_node_t *out)
 {
   uint8_t buf[24];
   tars_status_t st;
+  uint8_t i;
 
   if (out == NULL)
   {
     return TARS_ERR_PARAM;
   }
-  /* 0x00..0x17：proto..cap_count,profile,uid[12] */
-  st = TarsNodeBus_ReadReg(addr, TNB_REG_PROTO_VER, buf, 24U);
-  if (st != TARS_OK)
+  /* Soft-I2C LITE: one-byte frames (multi-byte from 0x00 was unreliable). */
+  for (i = 0U; i < 24U; i++)
   {
-    return st;
+    st = TarsNodeBus_ReadReg(addr, (uint8_t)(TNB_REG_PROTO_VER + i), &buf[i], 1U);
+    if (st != TARS_OK)
+    {
+      return st;
+    }
   }
   out->addr = addr;
   out->present = 1U;
@@ -426,7 +470,7 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
   if (sscanf(args, "%15s%n", cmd, &n) < 1)
   {
     (void)snprintf(out, out_size,
-                   "usage: nodebus scan|list|health <a>|caps <a>|mux <a> <ch>|probe|bus\r\n");
+                   "usage: nodebus scan|list|health <a>|id <a>|caps <a>|mux <a> <ch>|probe|bus\r\n");
     return;
   }
   args += n;
@@ -469,6 +513,89 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
       (void)snprintf(out, out_size, "0x%02X: read failed\r\n", a);
     }
   }
+  else if (strcmp(cmd, "rd") == 0)
+  {
+    char addr_tok[16];
+    unsigned reg = 0U;
+    unsigned len = 1U;
+    int n2 = 0;
+    uint8_t buf[16];
+    uint8_t a;
+    uint8_t i;
+    tars_status_t st;
+    uint32_t used = 0U;
+
+    if (sscanf(args, "%15s%n", addr_tok, &n2) != 1)
+    {
+      (void)snprintf(out, out_size, "usage: nodebus rd <addr> <reg> [len]\r\n");
+      return;
+    }
+    if (sscanf(args + n2, "%u%n", &reg, &n2) != 1)
+    {
+      (void)snprintf(out, out_size, "usage: nodebus rd <addr> <reg> [len]\r\n");
+      return;
+    }
+    {
+      int n3 = 0;
+      if (sscanf(args + n2, "%u", &len) != 1) { len = 1U; }
+      (void)n3;
+    }
+    if ((len == 0U) || (len > 16U) || (reg > 255U))
+    {
+      (void)snprintf(out, out_size, "rd: bad reg/len\r\n");
+      return;
+    }
+    a = parse_hex_or_dec(addr_tok);
+    st = TarsNodeBus_ReadReg(a, (uint8_t)reg, buf, (uint16_t)len);
+    if (st != TARS_OK)
+    {
+      (void)snprintf(out, out_size, "rd 0x%02X@0x%02X len=%u fail st=%d err=0x%08lX\r\n",
+                     a, (unsigned)reg, len, (int)st, (unsigned long)s_hi2c->ErrorCode);
+      return;
+    }
+    used = (uint32_t)snprintf(out, out_size, "rd 0x%02X@0x%02X:", a, (unsigned)reg);
+    for (i = 0U; (i < (uint8_t)len) && (used + 4U < out_size); i++)
+    {
+      used += (uint32_t)snprintf(out + used, out_size - used, " %02X", buf[i]);
+    }
+    (void)snprintf(out + used, out_size - used, "\r\n");
+  }
+  else if (strcmp(cmd, "id") == 0)
+  {
+    tars_node_t nd;
+    uint8_t a = parse_hex_or_dec(args);
+    uint8_t buf[24];
+    uint8_t i;
+    uint8_t fail_at = 0xFFU;
+    tars_status_t st = TARS_OK;
+
+    for (i = 0U; i < 24U; i++)
+    {
+      st = TarsNodeBus_ReadReg(a, (uint8_t)(TNB_REG_PROTO_VER + i), &buf[i], 1U);
+      if (st != TARS_OK)
+      {
+        fail_at = i;
+        break;
+      }
+    }
+    if (st == TARS_OK)
+    {
+      nd.vendor_id = (uint16_t)(buf[2] | (buf[3] << 8));
+      nd.product_id = (uint16_t)(buf[4] | (buf[5] << 8));
+      nd.fw_ver = (uint16_t)(buf[6] | (buf[7] << 8));
+      (void)snprintf(out, out_size,
+                     "0x%02X: id ok vid=0x%04X pid=0x%04X board=%u prof=%u caps=%u "
+                     "fw=%u.%u proto=%u\r\n",
+                     a, nd.vendor_id, nd.product_id, buf[8], buf[11], buf[10],
+                     (nd.fw_ver >> 8), (nd.fw_ver & 0xFFU), buf[0]);
+    }
+    else
+    {
+      (void)snprintf(out, out_size, "0x%02X: id fail at +%u (reg 0x%02X) st=%d err=0x%08lX\r\n",
+                     a, (unsigned)fail_at, (unsigned)fail_at, (int)st,
+                     (unsigned long)s_hi2c->ErrorCode);
+    }
+  }
   else if (strcmp(cmd, "caps") == 0)
   {
     uint8_t a = parse_hex_or_dec(args);
@@ -500,10 +627,16 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
         (sscanf(args + n2, "%u", &ch) == 1))
     {
       uint8_t a = parse_hex_or_dec(addr_tok);
+      uint8_t got = 0xFFU;
       tars_status_t st1 = TarsNodeBus_MuxSelect(a, (uint8_t)ch);
-      tars_status_t st2 = TarsNodeBus_MuxEnable(a, 1U);
-      (void)snprintf(out, out_size, "mux 0x%02X ch=%u sel=%d en=%d\r\n", a, ch,
-                     (int)st1, (int)st2);
+      tars_status_t st2 = TARS_ERR_STATE;
+      /* LITE/ATtiny: EN is hardwired; do not follow with MuxEnable write. */
+      if (st1 == TARS_OK)
+      {
+        st2 = TarsNodeBus_ReadReg(a, TNB_REG_MUX_CH, &got, 1U);
+      }
+      (void)snprintf(out, out_size, "mux 0x%02X ch=%u sel=%d get=%u getst=%d\r\n",
+                     a, ch, (int)st1, (unsigned)got, (int)st2);
     }
     else
     {
@@ -518,7 +651,28 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
 
     if (sscanf(args, "%15s", mode) != 1)
     {
-      (void)snprintf(out, out_size, "usage: nodebus bus idle|sda0|sda1|scl0|scl1\r\n");
+      (void)snprintf(out, out_size,
+                     "usage: nodebus bus idle|status|sda0|sda1|scl0|scl1\r\n");
+      return;
+    }
+    if (strcmp(mode, "status") == 0)
+    {
+      /* Do not re-init — report live pin + I2C2 state (stuck-low diagnosis). */
+      idr = GPIOB->IDR;
+      (void)snprintf(out, out_size,
+                     "bus status: SCL=%u SDA=%u MODER=%08lX OTYPER=%08lX ODR=%08lX "
+                     "I2C_SR1=%04lX SR2=%04lX CR1=%04lX busy=%u err=0x%08lX\r\n",
+                     (unsigned)((idr >> 10) & 1U),
+                     (unsigned)((idr >> 11) & 1U),
+                     (unsigned long)GPIOB->MODER,
+                     (unsigned long)GPIOB->OTYPER,
+                     (unsigned long)GPIOB->ODR,
+                     (unsigned long)(hi2c2.Instance ? hi2c2.Instance->SR1 : 0U),
+                     (unsigned long)(hi2c2.Instance ? hi2c2.Instance->SR2 : 0U),
+                     (unsigned long)(hi2c2.Instance ? hi2c2.Instance->CR1 : 0U),
+                     (unsigned)((hi2c2.Instance != NULL) &&
+                                (__HAL_I2C_GET_FLAG(&hi2c2, I2C_FLAG_BUSY) != RESET)),
+                     (unsigned long)hi2c2.ErrorCode);
       return;
     }
     if (strcmp(mode, "idle") == 0)
@@ -531,13 +685,13 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
       return;
     }
 
-    HAL_I2C_DeInit(&hi2c2);
+    /* Bit-bang hold: must kill I2C2 HW first (MspDeInit is I2C3-only). */
+    MX_I2C2_BusRelease();
     gpio.Pin = GPIO_PIN_10 | GPIO_PIN_11;
     gpio.Mode = GPIO_MODE_OUTPUT_OD;
-    gpio.Pull = GPIO_PULLUP;
+    gpio.Pull = GPIO_NOPULL; /* external 5 V pullups only (TNB §0) */
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOB, &gpio);
-    /* Default both released high; then pull the selected line. */
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10 | GPIO_PIN_11, GPIO_PIN_SET);
     if (strcmp(mode, "sda0") == 0)
     {
@@ -557,7 +711,8 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
     }
     else
     {
-      (void)snprintf(out, out_size, "usage: nodebus bus idle|sda0|sda1|scl0|scl1\r\n");
+      (void)snprintf(out, out_size,
+                     "usage: nodebus bus idle|status|sda0|sda1|scl0|scl1\r\n");
       return;
     }
     idr = GPIOB->IDR;
@@ -578,28 +733,7 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
       return;
     }
 
-    /* Bus recover if stuck: generate 9 SCL pulses as GPIO then re-init AF. */
-    if (__HAL_I2C_GET_FLAG(s_hi2c, I2C_FLAG_BUSY) != RESET)
-    {
-      GPIO_InitTypeDef gpio = {0};
-      uint8_t i;
-      HAL_I2C_DeInit(s_hi2c);
-      gpio.Pin = GPIO_PIN_10 | GPIO_PIN_11;
-      gpio.Mode = GPIO_MODE_OUTPUT_OD;
-      gpio.Pull = GPIO_PULLUP;
-      gpio.Speed = GPIO_SPEED_FREQ_LOW;
-      HAL_GPIO_Init(GPIOB, &gpio);
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET); /* SDA high */
-      for (i = 0U; i < 9U; i++)
-      {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
-        HAL_Delay(1);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-        HAL_Delay(1);
-      }
-      MX_I2C2_Init();
-      TarsNodeBus_Init(&hi2c2);
-    }
+    nb_bus_ensure();
 
     idr = GPIOB->IDR;
     used += (uint32_t)snprintf(out, out_size,
@@ -610,11 +744,28 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
                                (unsigned long)s_hi2c->ErrorCode);
     for (a = 0x08U; (a < 0x78U) && (used + 8U < out_size); a++)
     {
-      st = HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 1U, 5U);
+      if (nb_bus_needs_recover() != 0U)
+      {
+        nb_bus_recover();
+      }
+      st = HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 1U, 20U);
       if (st == HAL_OK)
       {
         used += (uint32_t)snprintf(out + used, out_size - used, "  ACK 0x%02X\r\n", a);
         ack++;
+        /* SDA stuck low → every addr ACKs; stop and recover. */
+        if (ack >= 3U)
+        {
+          nb_bus_recover();
+          used += (uint32_t)snprintf(out + used, out_size - used,
+                                     "  (abort: likely SDA stuck low)\r\n");
+          break;
+        }
+      }
+      else if (st != HAL_ERROR)
+      {
+        /* Timeout/busy: clear before next address. */
+        nb_bus_recover();
       }
     }
     if (ack == 0U)

@@ -3,6 +3,7 @@
 #include "tars_storage.h"
 #include "tars_lfs.h"
 #include "tars_platform.h"
+#include "node_bus/tars_nodebus.h"
 #include "main.h"
 #include "lua.h"
 #include "lauxlib.h"
@@ -429,6 +430,76 @@ static int l_tars_open(lua_State *L)
   return 1;
 }
 
+/* Node Bus — discover / mux control (see tars-io-mux docs/tars-node-bus.md). */
+static int l_tars_nodebus_scan(lua_State *L)
+{
+  int n = TarsNodeBus_Enumerate();
+  lua_pushinteger(L, (lua_Integer)n);
+  return 1;
+}
+
+static int l_tars_nodebus_count(lua_State *L)
+{
+  lua_pushinteger(L, (lua_Integer)TarsNodeBus_Count());
+  return 1;
+}
+
+static void tars_lua_push_node(lua_State *L, const tars_node_t *n)
+{
+  lua_createtable(L, 0, 10);
+  lua_pushinteger(L, (lua_Integer)n->addr);
+  lua_setfield(L, -2, "addr");
+  lua_pushinteger(L, (lua_Integer)n->board_id);
+  lua_setfield(L, -2, "board_id");
+  lua_pushinteger(L, (lua_Integer)n->vendor_id);
+  lua_setfield(L, -2, "vendor_id");
+  lua_pushinteger(L, (lua_Integer)n->product_id);
+  lua_setfield(L, -2, "product_id");
+  lua_pushinteger(L, (lua_Integer)n->fw_ver);
+  lua_setfield(L, -2, "fw_ver");
+  lua_pushinteger(L, (lua_Integer)n->profile);
+  lua_setfield(L, -2, "profile");
+  lua_pushinteger(L, (lua_Integer)n->cap_count);
+  lua_setfield(L, -2, "cap_count");
+  lua_pushinteger(L, (lua_Integer)n->proto_ver);
+  lua_setfield(L, -2, "proto_ver");
+  lua_pushboolean(L, n->present != 0U);
+  lua_setfield(L, -2, "present");
+  lua_pushboolean(L, n->conflict != 0U);
+  lua_setfield(L, -2, "conflict");
+}
+
+static int l_tars_nodebus_get(lua_State *L)
+{
+  int index = (int)luaL_checkinteger(L, 1);
+  const tars_node_t *n;
+
+  if (index < 0)
+  {
+    lua_pushnil(L);
+    return 1;
+  }
+
+  n = TarsNodeBus_Get((uint8_t)index);
+  if (n == NULL)
+  {
+    lua_pushnil(L);
+    return 1;
+  }
+
+  tars_lua_push_node(L, n);
+  return 1;
+}
+
+static int l_tars_nodebus_mux(lua_State *L)
+{
+  uint8_t addr = (uint8_t)luaL_checkinteger(L, 1);
+  uint8_t ch = (uint8_t)luaL_checkinteger(L, 2);
+  tars_status_t st = TarsNodeBus_MuxSelect(addr, ch);
+  lua_pushinteger(L, (lua_Integer)st);
+  return 1;
+}
+
 static const luaL_Reg tars_file_methods[] = {
   {"read", l_file_read},
   {"close", l_file_close},
@@ -455,6 +526,10 @@ static int tars_lua_register_api(lua_State *L)
     {"log", l_tars_log},
     {"yield", l_tars_yield},
     {"open", l_tars_open},
+    {"nodebus_scan", l_tars_nodebus_scan},
+    {"nodebus_count", l_tars_nodebus_count},
+    {"nodebus_get", l_tars_nodebus_get},
+    {"nodebus_mux", l_tars_nodebus_mux},
     {NULL, NULL}
   };
 

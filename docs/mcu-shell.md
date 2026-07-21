@@ -203,6 +203,16 @@ Sections: `[periph]`, `[gpio]`, `[pwm]`, `[dac]`. Tenants are runtime-only
 tars.gpio_write("pg13", 0)
 tars.pwm_duty("pwm0", 50.0)
 tars.pwm_enable("pwm0", 1)
+
+-- Node Bus (I²C slaves; see tars-io-mux docs/tars-node-bus.md §0 / §3.1)
+n = tars.nodebus_scan()          -- enumerate; returns node count (or <0)
+c = tars.nodebus_count()
+node = tars.nodebus_get(0)       -- {addr, product_id, vendor_id, profile, …} or nil
+st = tars.nodebus_mux(0x10, 3)   -- select channel; 0 = OK
 ```
 
 Grant a tenant from the shell before Lua uses a resource (`mcu res grant`).
+
+Infrequent board utilities can live as Lua under `tools/examples/` (source),
+packed to `.tlua` and installed to LittleFS `/apps` when needed — e.g.
+`mux_pin_walk.lua` walks io-mux channels for pin bring-up.

@@ -45,6 +45,8 @@ void MX_I2C3_Init(void);
  * those pins are LTDC_G4/G5 when TARS_FEATURE_LCD=1. */
 extern I2C_HandleTypeDef hi2c2;
 void MX_I2C2_Init(void);
+/* Disable I2C2 HW and release PB10/PB11 as OD high (external pull-ups). */
+void MX_I2C2_BusRelease(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

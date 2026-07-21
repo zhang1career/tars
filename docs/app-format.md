@@ -45,4 +45,7 @@ sys top
 
 Serial install: `python3 tools/tars-send.py hello.tlua -p /dev/tty.usbmodemXXXX`
 
+Infrequent utilities stay as Lua source under `tools/examples/` (e.g.
+`mux_pin_walk.lua`); pack and send to LittleFS `/apps` only when needed.
+
 See [scheduling.md](scheduling.md), [flash-layout.md](flash-layout.md).
