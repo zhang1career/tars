@@ -49,7 +49,8 @@ static void nb_bus_recover(void)
     HAL_Delay(1);
   }
   MX_I2C2_Init();
-  TarsNodeBus_Init(&hi2c2);
+  /* Rebind handle only — do not wipe s_nodes (scan/list must survive recover). */
+  s_hi2c = &hi2c2;
 }
 
 static uint8_t nb_bus_needs_recover(void)
@@ -110,29 +111,83 @@ static tars_status_t nb_after_hal_fail(void)
   return TARS_ERR_STATE;
 }
 
+/* Caps: known node → from PROFILE at identity; unknown → LITE (normative default). */
+static void nb_caps_lookup(uint8_t addr, uint8_t *max_w, uint8_t *max_r, uint8_t *flags)
+{
+  const tars_node_t *n = TarsNodeBus_Find(addr);
+
+  if ((n != NULL) && (n->present != 0U) && (n->max_write_payload != 0U))
+  {
+    *max_w = n->max_write_payload;
+    *max_r = n->max_read_burst;
+    *flags = n->xfer_flags;
+    return;
+  }
+  *max_w = TNB_MAX_WRITE_PAYLOAD_LITE;
+  *max_r = TNB_MAX_READ_BURST_LITE;
+  *flags = TNB_XFER_FLAGS_LITE;
+}
+
+static void nb_caps_from_profile(uint8_t profile, tars_node_t *out)
+{
+  if (profile == TNB_PROFILE_LITE)
+  {
+    out->max_write_payload = TNB_MAX_WRITE_PAYLOAD_LITE;
+    out->max_read_burst = TNB_MAX_READ_BURST_LITE;
+    out->xfer_flags = TNB_XFER_FLAGS_LITE;
+  }
+  else
+  {
+    out->max_write_payload = TNB_MAX_WRITE_PAYLOAD_FULL;
+    out->max_read_burst = TNB_MAX_READ_BURST_FULL;
+    out->xfer_flags = TNB_XFER_FLAGS_FULL;
+  }
+}
+
 /* ---- 底层寄存器读写 ---- */
 tars_status_t TarsNodeBus_ReadReg(uint8_t addr, uint8_t reg, uint8_t *buf, uint16_t len)
 {
   uint16_t dev = (uint16_t)(addr << 1);
+  uint8_t max_w;
+  uint8_t max_r;
+  uint8_t flags;
+  uint16_t gap_ms;
 
-  if ((s_hi2c == NULL) || (buf == NULL))
+  if ((s_hi2c == NULL) || (buf == NULL) || (len == 0U))
   {
     return TARS_ERR_PARAM;
   }
-  nb_bus_ensure();
-  /*
-   * Soft-I2C LITE (ATtiny): Repeated-START inside one slave poll is ideal,
-   * but older firmware missed Sr. Fallback = pointer write + STOP + read,
-   * with a short gap so the slave re-enters SoftI2c_Poll before the next START.
-   */
-  if (HAL_I2C_Master_Transmit(s_hi2c, dev, &reg, 1U, NB_TIMEOUT_MS) != HAL_OK)
+  nb_caps_lookup(addr, &max_w, &max_r, &flags);
+  if (max_r == 0U)
   {
-    return nb_after_hal_fail();
+    max_r = TNB_MAX_READ_BURST_LITE;
   }
-  HAL_Delay(5);
-  if (HAL_I2C_Master_Receive(s_hi2c, dev, buf, len, NB_TIMEOUT_MS) != HAL_OK)
+  gap_ms = ((flags & TNB_XFER_STOP_FLUSH_WRITE) != 0U) ? 5U : 1U;
+  nb_bus_ensure();
+
+  /*
+   * Unified wire: pointer write + STOP + gap + read (NO_SR path).
+   * Long reads are split to max_read_burst.
+   */
+  while (len > 0U)
   {
-    return nb_after_hal_fail();
+    uint16_t chunk = len;
+    if (chunk > (uint16_t)max_r)
+    {
+      chunk = max_r;
+    }
+    if (HAL_I2C_Master_Transmit(s_hi2c, dev, &reg, 1U, NB_TIMEOUT_MS) != HAL_OK)
+    {
+      return nb_after_hal_fail();
+    }
+    HAL_Delay(gap_ms);
+    if (HAL_I2C_Master_Receive(s_hi2c, dev, buf, chunk, NB_TIMEOUT_MS) != HAL_OK)
+    {
+      return nb_after_hal_fail();
+    }
+    buf += chunk;
+    reg = (uint8_t)(reg + (uint8_t)chunk);
+    len = (uint16_t)(len - chunk);
   }
   return TARS_OK;
 }
@@ -142,11 +197,25 @@ tars_status_t TarsNodeBus_WriteReg(uint8_t addr, uint8_t reg, const uint8_t *buf
   uint8_t frame[17];
   uint16_t i;
   uint16_t dev = (uint16_t)(addr << 1);
+  uint8_t max_w;
+  uint8_t max_r;
+  uint8_t flags;
+  uint16_t gap_ms;
 
-  if ((s_hi2c == NULL) || ((len > 0U) && (buf == NULL)) || (len > 16U))
+  if ((s_hi2c == NULL) || ((len > 0U) && (buf == NULL)))
   {
     return TARS_ERR_PARAM;
   }
+  nb_caps_lookup(addr, &max_w, &max_r, &flags);
+  if (len > (uint16_t)max_w)
+  {
+    return TARS_ERR_PARAM;
+  }
+  if ((1U + len) > sizeof(frame))
+  {
+    return TARS_ERR_PARAM;
+  }
+  gap_ms = ((flags & TNB_XFER_STOP_FLUSH_WRITE) != 0U) ? 2U : 1U;
   nb_bus_ensure();
   /* One START/STOP write: [reg || payload]. Slave buffers bytes until STOP. */
   frame[0] = reg;
@@ -158,7 +227,7 @@ tars_status_t TarsNodeBus_WriteReg(uint8_t addr, uint8_t reg, const uint8_t *buf
   {
     return nb_after_hal_fail();
   }
-  HAL_Delay(2);
+  HAL_Delay(gap_ms);
   return TARS_OK;
 }
 
@@ -308,6 +377,8 @@ tars_status_t TarsNodeBus_ReadIdentity(uint8_t addr, tars_node_t *out)
   out->cap_count = buf[10];
   out->profile = buf[11];
   memcpy(out->uid, &buf[12], 12);
+  /* Xfer caps come only from PROFILE constants (LITE never has 0x2D–0x2F). */
+  nb_caps_from_profile(out->profile, out);
   return TARS_OK;
 }
 
@@ -530,15 +601,25 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
       (void)snprintf(out, out_size, "usage: nodebus rd <addr> <reg> [len]\r\n");
       return;
     }
-    if (sscanf(args + n2, "%u%n", &reg, &n2) != 1)
     {
-      (void)snprintf(out, out_size, "usage: nodebus rd <addr> <reg> [len]\r\n");
-      return;
-    }
-    {
+      char reg_tok[16];
+      char len_tok[16];
       int n3 = 0;
-      if (sscanf(args + n2, "%u", &len) != 1) { len = 1U; }
-      (void)n3;
+      if (sscanf(args + n2, "%15s%n", reg_tok, &n3) != 1)
+      {
+        (void)snprintf(out, out_size, "usage: nodebus rd <addr> <reg> [len]\r\n");
+        return;
+      }
+      n2 += n3;
+      reg = (unsigned)parse_hex_or_dec(reg_tok);
+      if (sscanf(args + n2, "%15s", len_tok) == 1)
+      {
+        len = (unsigned)strtoul(len_tok, NULL, 0);
+      }
+      else
+      {
+        len = 1U;
+      }
     }
     if ((len == 0U) || (len > 16U) || (reg > 255U))
     {

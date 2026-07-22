@@ -27,6 +27,9 @@ typedef struct {
   uint8_t  proto_ver;
   uint8_t  profile;     /* TNB_PROFILE_FULL / LITE */
   uint8_t  conflict;    /* 静态扫描与 ARP 条目身份不一致 */
+  uint8_t  max_write_payload; /* from PROFILE constants at identity */
+  uint8_t  max_read_burst;
+  uint8_t  xfer_flags;        /* TNB_XFER_* */
   uint16_t vendor_id;
   uint16_t product_id;
   uint16_t fw_ver;

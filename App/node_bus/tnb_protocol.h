@@ -20,9 +20,12 @@ extern "C" {
 #define TNB_PRODUCT_IO_MUX       0x0001U /* v0_1: CD74HC4067 16ch (0..VCC) */
 #define TNB_PRODUCT_IO_MUX_HV    0x0002U /* ADG1408 8ch bipolar（F030 或 ATtiny） */
 
-/* ---- 节点配置档（PROFILE） ---- */
-#define TNB_PROFILE_FULL         0x00U /* 支持 ARP、完整能力/健康 */
-#define TNB_PROFILE_LITE         0x01U /* 静态地址、精简寄存器；不参与 ARP */
+/* ---- 节点配置档（PROFILE）----
+ * 同时选定传输约束（见 TNB_MAX_* / TNB_XFER_FLAGS_*）。
+ * LITE = 低性能从机规范档（ATtiny13A / soft-I²C）；约束以常量为准，无 0x2D–0x2F。
+ */
+#define TNB_PROFILE_FULL         0x00U /* 硬件 I²C；可 ARP；须镜像 0x2D–0x2F */
+#define TNB_PROFILE_LITE         0x01U /* 静态地址；精简寄存器；不参与 ARP */
 
 /* ---- 地址规划（7-bit） ---- */
 #define TNB_ADDR_GENERAL_CALL    0x00U
@@ -59,6 +62,28 @@ extern "C" {
 #define TNB_REG_HEARTBEAT        0x2AU /* u8  */
 #define TNB_REG_LAST_ERR         0x2BU /* u8  */
 #define TNB_REG_I2C_OK           0x2CU /* u8  上次事务成功计数/标志（可选） */
+
+/* 传输约束寄存器：仅 PROFILE_FULL 镜像下列常量；LITE 保留（读 0）。
+ * 权威来源始终是 PROFILE → TNB_MAX_*_LITE/FULL + TNB_XFER_FLAGS_*。
+ */
+#define TNB_REG_MAX_WRITE_PAYLOAD 0x2DU /* u8 FULL：单次写 payload 上限（不含 reg） */
+#define TNB_REG_MAX_READ_BURST    0x2EU /* u8 FULL：单次读突发上限 */
+#define TNB_REG_XFER_FLAGS        0x2FU /* u8 FULL：TNB_XFER_* */
+
+#define TNB_XFER_NO_SR            (1U << 0) /* 禁止 Repeated Start；指针写后须 STOP */
+#define TNB_XFER_STOP_FLUSH_WRITE (1U << 1) /* STOP 后 master 须短延迟再发下一帧 */
+#define TNB_XFER_STATIC_ADDR_ONLY (1U << 2) /* 静态地址；无 ARP/GC */
+#define TNB_XFER_BYTE_READ_PREF   (1U << 3) /* 身份等窗口宜逐字节读 */
+
+/* PROFILE → 传输约束（规范常量） */
+#define TNB_MAX_WRITE_PAYLOAD_LITE  1U
+#define TNB_MAX_READ_BURST_LITE     16U
+#define TNB_XFER_FLAGS_LITE                                                    \
+  (TNB_XFER_NO_SR | TNB_XFER_STOP_FLUSH_WRITE | TNB_XFER_STATIC_ADDR_ONLY |    \
+   TNB_XFER_BYTE_READ_PREF)
+#define TNB_MAX_WRITE_PAYLOAD_FULL  16U
+#define TNB_MAX_READ_BURST_FULL     32U
+#define TNB_XFER_FLAGS_FULL         (TNB_XFER_STOP_FLUSH_WRITE)
 
 /* 控制（RW） */
 #define TNB_REG_MUX_CH           0x40U /* u8  通道号 */
