@@ -5,10 +5,13 @@
 #include "tars_res_mgr.h"
 #include "tars_res_profile.h"
 #include "tars_foc.h"
+#include "tars_hall6.h"
+#include "tars_openloop.h"
 #include "tars_lfs.h"
 #include "tars_storage.h"
 #include "tars_motor.h"
 #include "lcd_viewport.h"
+#include "tim.h"
 #include "cmsis_os.h"
 
 /* Motor control loop runs at 100 ms (TarsMotor uses dt = 0.1 s). */
@@ -42,8 +45,6 @@ static void TarsResource_WaitForLfs(void)
 
 static void TarsResource_ApplyBootPolicy(void)
 {
-  int skip_foc_hw = 0;
-
   TarsResource_WaitForLfs();
 
   if (TarsLfs_IsMounted() != 0)
@@ -52,18 +53,14 @@ static void TarsResource_ApplyBootPolicy(void)
   }
 
   TarsFoc_Init();
-
-  if ((TarsResProfile_HasStaged() != 0) && (TarsResProfile_Pwm0BootOnTim1() != 0))
-  {
-    skip_foc_hw = 1;
-  }
-
-  if (skip_foc_hw == 0)
-  {
-    TarsFoc_BootHw();
-  }
+  TarsHall6_Init();
+  TarsOpenloop_Init();
+  TarsFoc_BootHw();
+  TarsHall6_BootHw();
 
   (void)TarsResProfile_Apply();
+  (void)TarsResPwm_Tim1ForceSafe();
+  TarsTim1_StartBaseForAdc();
 }
 
 void TarsResource_Init(void)

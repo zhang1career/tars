@@ -3,6 +3,7 @@
 #include "tars_res_mgr.h"
 #include "tars_mcu_pinmap.h"
 #include "tars_foc.h"
+#include "tars_hall6.h"
 #include "main.h"
 #include "tim.h"
 #include <stdio.h>
@@ -602,7 +603,7 @@ static int pwm_configure_channel(const tars_mcu_pwm_entry_t *map, uint8_t duty_p
  * commutating). A running controller holds the timer exclusively. */
 static int pwm_foc_tim_active(void)
 {
-  return TarsFoc_IsEnabled();
+  return (TarsFoc_IsEnabled() != 0) || (TarsHall6_IsEnabled() != 0);
 }
 
 static int32_t pwm_link_norm_offset(int32_t off, uint32_t period)
@@ -1012,6 +1013,28 @@ int TarsResPwm_IsComplementRunning(const char *channel)
   tars_pwm_ch_t *ch = pwm_ch_slot(channel, 0);
 
   return ((ch != NULL) && (ch->complement_running != 0U)) ? 1 : 0;
+}
+
+int TarsResPwm_Tim1ForceSafe(void)
+{
+  static const char *tim1_ch[] = {"pwm0", "pwm1", "pwm2"};
+  uint32_t i;
+
+  for (i = 0U; i < 3U; i++)
+  {
+    (void)TarsResPwm_Enable(tim1_ch[i], 0);
+  }
+
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+  TarsTim1_HardwareSafe();
+  (void)HAL_TIM_Base_Start(&htim1);
+
+  return 0;
 }
 
 int TarsResPwm_Enable(const char *channel, int enable)

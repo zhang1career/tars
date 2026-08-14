@@ -560,6 +560,18 @@ int TarsResProfile_Load(void)
   return 0;
 }
 
+static int profile_pwm_is_motor_bridge(const char *channel)
+{
+  if (channel == NULL)
+  {
+    return 0;
+  }
+
+  return ((strncmp(channel, "pwm0", TARS_RES_PROFILE_ID_LEN) == 0) ||
+          (strncmp(channel, "pwm1", TARS_RES_PROFILE_ID_LEN) == 0) ||
+          (strncmp(channel, "pwm2", TARS_RES_PROFILE_ID_LEN) == 0)) ? 1 : 0;
+}
+
 static int profile_pwm0_boot_on_tim1(void)
 {
   uint32_t i;
@@ -615,22 +627,16 @@ int TarsResProfile_Apply(void)
 
   for (i = 0U; i < s_staged.hdr.pwm_count; i++)
   {
+    if (profile_pwm_is_motor_bridge(s_staged.pwm[i].channel))
+    {
+      s_staged.pwm[i].boot_enable = 0U;
+    }
+
     (void)TarsResPwm_SetPolarity(s_staged.pwm[i].channel, (int)s_staged.pwm[i].polarity_low);
     (void)TarsResPwm_SetDuty(s_staged.pwm[i].channel, (float)s_staged.pwm[i].duty_pct);
     (void)TarsResPwm_SetPersist(s_staged.pwm[i].channel, (int)s_staged.pwm[i].boot_enable);
     (void)TarsResPwm_SetComplementPersist(s_staged.pwm[i].channel,
                                           (int)s_staged.pwm[i].boot_complement);
-  }
-
-  for (i = 0U; i < s_staged.hdr.pwm_count; i++)
-  {
-    if ((s_staged.pwm[i].boot_enable != 0U) &&
-        (strncmp(s_staged.pwm[i].channel, "pwm0", TARS_RES_PROFILE_ID_LEN) == 0))
-    {
-      st = TarsResPwm_Enable("pwm0", 1);
-      (void)st;
-      break;
-    }
   }
 
   if ((s_staged.hdr.flags & TARS_PROF_FLAG_PWM_LINK) != 0U)
@@ -640,7 +646,7 @@ int TarsResProfile_Apply(void)
 
   for (i = 0U; i < s_staged.hdr.pwm_count; i++)
   {
-    if (strncmp(s_staged.pwm[i].channel, "pwm0", TARS_RES_PROFILE_ID_LEN) == 0)
+    if (profile_pwm_is_motor_bridge(s_staged.pwm[i].channel))
     {
       continue;
     }
@@ -654,6 +660,11 @@ int TarsResProfile_Apply(void)
 
   for (i = 0U; i < s_staged.hdr.pwm_count; i++)
   {
+    if (profile_pwm_is_motor_bridge(s_staged.pwm[i].channel))
+    {
+      continue;
+    }
+
     if ((s_staged.pwm[i].boot_complement != 0U) &&
         (TarsResPwm_IsRunning(s_staged.pwm[i].channel) != 0))
     {

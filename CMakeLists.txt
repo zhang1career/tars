@@ -151,7 +151,7 @@ add_dependencies(tars_config_gen tars_foc_sync)
 # Treat the generated FOC tree as a system include so its (academic-license,
 # Embedded-Coder) headers don't trip the firmware's stricter warnings.
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${TARS_FOC_GEN_DIR})
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/App/foc)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/App/foc ${CMAKE_SOURCE_DIR}/App/motor)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -205,6 +205,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/App/tars_hal.c
     ${CMAKE_SOURCE_DIR}/App/tars_motor.c
     ${CMAKE_SOURCE_DIR}/App/foc/tars_foc.c
+    ${CMAKE_SOURCE_DIR}/App/motor/tars_hall6.c
+    ${CMAKE_SOURCE_DIR}/App/motor/tars_openloop.c
     ${CMAKE_SOURCE_DIR}/App/tars_builtin_apps.c
     ${CMAKE_SOURCE_DIR}/App/apps/app_motor_ctl.c
     ${CMAKE_SOURCE_DIR}/App/tars_sys.c

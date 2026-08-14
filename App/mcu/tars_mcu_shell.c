@@ -78,6 +78,7 @@ static void mcu_pwm_help(char *out, uint32_t out_size)
                  "  list                 List PWM channels on this board\r\n"
                  "  status <ch>          Show channel runtime state\r\n"
                  "  enable <ch> <0|1>    Start or stop PWM output\r\n"
+                 "  safe                 Force TIM1 bridge off (MOE=0, CCR=0)\r\n"
                  "  duty <ch> <0-100>    Set duty cycle (%%)\r\n"
                  "  freq <timN> <hz>     Set timer frequency (shared per TIM)\r\n"
                  "  polarity <ch> [pol]  Query or set output polarity (high|low)\r\n"
@@ -375,6 +376,13 @@ int TarsMcu_ShellHandle(const char *args, char *out, uint32_t out_size)
         return 1;
       }
       (void)TarsResPwm_GetStatus(ch, out, out_size);
+      return 1;
+    }
+
+    if (mcu_str_eq(rest, "safe"))
+    {
+      (void)TarsResPwm_Tim1ForceSafe();
+      (void)snprintf(out, out_size, "mcu pwm safe: tim1 moe=0 ccr=0\r\n");
       return 1;
     }
 

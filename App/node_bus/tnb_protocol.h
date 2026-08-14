@@ -27,15 +27,46 @@ extern "C" {
 #define TNB_PROFILE_FULL         0x00U /* 硬件 I²C；可 ARP；须镜像 0x2D–0x2F */
 #define TNB_PROFILE_LITE         0x01U /* 静态地址；精简寄存器；不参与 ARP */
 
-/* ---- 地址规划（7-bit） ---- */
+/* ---- 地址规划（7-bit）----
+ * 分段（内部约定）：
+ *   LITE: 0 + 6bit → [0x00, 0x40)   洞：0x00..0x07、0x0C(ARA)
+ *   FULL: 10 + 5bit → [0x40, 0x60)
+ *   RSV:  11 + 5bit → [0x60, 0x80)  含 ARP 0x61、I²C 0x78..0x7F
+ */
 #define TNB_ADDR_GENERAL_CALL    0x00U
-#define TNB_ADDR_ARP             0x61U /* 未解析 full 节点的枚举应答地址 */
-#define TNB_ADDR_ALERT_RESPONSE  0x0CU /* 可选 ARA */
-#define TNB_ADDR_RUNTIME_BASE    0x10U /* 首选地址 = BASE + board_id */
-#define TNB_ADDR_RUNTIME_MAX     0x2FU
-#define TNB_MAX_NODES            32U
+#define TNB_ADDR_ARP             0x61U /* 未解析 FULL 的枚举应答（落在 RSV） */
+#define TNB_ADDR_ALERT_RESPONSE  0x0CU /* 可选 ARA（LITE 池内洞） */
 
-#define TNB_ADDR_FROM_BOARD_ID(id) ((uint8_t)(TNB_ADDR_RUNTIME_BASE + ((id) & 0x1FU)))
+#define TNB_ADDR_LITE_BASE       0x00U
+#define TNB_ADDR_LITE_MAX        0x3FU
+#define TNB_ADDR_LITE_BURN_BASE  0x10U /* LITE 实务烧录/扫描起点（避开低址保留区） */
+#define TNB_ADDR_FULL_BASE       0x40U
+#define TNB_ADDR_FULL_MAX        0x5FU
+#define TNB_ADDR_RSV_BASE        0x60U
+#define TNB_ADDR_RSV_MAX         0x7FU
+
+#define TNB_MAX_FULL_NODES       32U  /* FULL 池 0x40..0x5F */
+#define TNB_MAX_LITE_NODES       48U  /* LITE 烧录子区间 0x10..0x3F */
+#define TNB_MAX_NODES            (TNB_MAX_FULL_NODES + TNB_MAX_LITE_NODES)
+
+#define TNB_ADDR_IS_LITE_POOL(a) (((uint8_t)(a)) < TNB_ADDR_FULL_BASE)
+#define TNB_ADDR_IS_FULL_POOL(a)                                               \
+  ((((uint8_t)(a)) >= TNB_ADDR_FULL_BASE) && (((uint8_t)(a)) <= TNB_ADDR_FULL_MAX))
+#define TNB_ADDR_IS_RSV_POOL(a)  (((uint8_t)(a)) >= TNB_ADDR_RSV_BASE)
+#define TNB_ADDR_LITE_OK(a)                                                    \
+  (TNB_ADDR_IS_LITE_POOL(a) && ((uint8_t)(a)) >= 0x08U &&                      \
+   ((uint8_t)(a)) != TNB_ADDR_ALERT_RESPONSE)
+
+/* board_id → 首选/静态地址（按 PROFILE） */
+#define TNB_ADDR_LITE_FROM_BOARD_ID(id)                                        \
+  ((uint8_t)(TNB_ADDR_LITE_BURN_BASE + ((uint8_t)(id) & 0x2FU))) /* 0..47 → 0x10..0x3F */
+#define TNB_ADDR_FULL_FROM_BOARD_ID(id)                                        \
+  ((uint8_t)(TNB_ADDR_FULL_BASE + ((uint8_t)(id) & 0x1FU)))      /* 0..31 → 0x40..0x5F */
+
+/* 兼容旧名：LITE 烧录/扫描子区间；FULL 请用 FULL_* */
+#define TNB_ADDR_RUNTIME_BASE    TNB_ADDR_LITE_BURN_BASE
+#define TNB_ADDR_RUNTIME_MAX     TNB_ADDR_LITE_MAX
+#define TNB_ADDR_FROM_BOARD_ID(id) TNB_ADDR_LITE_FROM_BOARD_ID(id)
 
 /* ---- General Call 子命令 ---- */
 #define TNB_GC_ARP_PREPARE       0x01U /* full 节点 AR=0；lite 可忽略 */
@@ -181,7 +212,7 @@ typedef struct __attribute__((packed)) {
 #define TNB_DEVCAP_ARP           (1U << 2) /* 参与 ARP；lite 无此位 */
 
 /* ---- 无工厂 UID 的 MCU：EEPROM 布局（ATtiny13A 等） ---- */
-#define TNB_EE_BOARD_ID          0U  /* u8, 0..31；0xFF → 视为 0 */
+#define TNB_EE_BOARD_ID          0U  /* u8, LITE: 0..47 → addr 0x10..0x3F；0xFF → 0 */
 #define TNB_EE_UID               1U  /* u8[12]，烧录写入的资产 UID */
 #define TNB_EE_UID_LEN           12U
 

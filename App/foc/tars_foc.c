@@ -1,9 +1,13 @@
 #include "tars_foc.h"
+#include "tars_hall6.h"
+#include "tars_openloop.h"
 #include "tars_res_mgr.h"
+#include "tars_res_pwm.h"
 #include "foc_step_stm32.h"
 #include "foc_step_stm32_initialize.h"
 #include "foc_params.h"
 #include "main.h"
+#include "tim.h"
 
 /* ------------------------------------------------------------------ */
 /* Build-time configuration                                           */
@@ -22,7 +26,8 @@
 
 /* Nominal bus used for the bench/idle path and as a guard before the real
  * Vdc measurement is available (single-sourced from the Simulink model). */
-#define TARS_FOC_VDC_NOMINAL FOC_PARAM_VDC_V
+/* Bench bring-up: 12 V supply, PC5 divider often absent — override model 24 V. */
+#define TARS_FOC_VDC_NOMINAL 12.0f
 
 #if TARS_FOC_DRIVE_PWM
 /* ---- Board / sensor scaling (EDIT FOR YOUR POWER STAGE) ---------- */
@@ -111,22 +116,11 @@ void TarsFoc_BootHw(void)
    * the bridge disabled (MOE off) before the first enable. */
 
   /* Injected sampling is hardware-triggered by TIM1 TRGO; JEOC drives the
-   * control loop. Start it, then start all three PWM channel pairs. */
+   * control loop. Run the timer for ADC triggers only — gate outputs (CCER/MOE)
+   * stay off until an explicit motor enable. */
   (void)HAL_ADCEx_InjectedStart_IT(&hadc1);
+  TarsTim1_StartBaseForAdc();
 
-  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
-  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
-
-  /* Keep the bridge OFF: TIM1 counts (so ADC is triggered and telemetry runs)
-   * but the gate outputs are disabled until TarsFoc_Enable(1). */
-  __HAL_TIM_MOE_DISABLE(&htim1);
-
-  /* Best-effort zero-current offset calibration now (bridge off). Re-run via
-   * `motor cal` once the power stage is up and the motor is at rest. */
   TarsFoc_Calibrate();
 #endif
 }
@@ -164,13 +158,20 @@ int TarsFoc_Enable(int enable)
         (TarsResMgr_Acquire("pwm2") != 0))
     {
       s_enable = 0U;
+      TarsResMgr_TimDomainRelease("tim1", TARS_TENANT_FOC);
       return 0;
     }
+
+    /* Avoid a one-shot pulse when MOE turns on. */
+    TarsTim1_EnsurePwmStarted();
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0U);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0U);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0U);
     __HAL_TIM_MOE_ENABLE(&htim1);
   }
   else
   {
-    __HAL_TIM_MOE_DISABLE(&htim1);
+    (void)TarsResPwm_Tim1ForceSafe();
     (void)TarsResMgr_Release("pwm0");
     (void)TarsResMgr_Release("pwm1");
     (void)TarsResMgr_Release("pwm2");
@@ -315,6 +316,16 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   if (hadc->Instance == ADC1)
   {
+    if (TarsOpenloop_IsEnabled() != 0)
+    {
+      TarsOpenloop_ControlLoopISR();
+      return;
+    }
+    if (TarsHall6_IsEnabled() != 0)
+    {
+      TarsHall6_ControlLoopISR();
+      return;
+    }
     TarsFoc_ControlLoopISR();
   }
 }

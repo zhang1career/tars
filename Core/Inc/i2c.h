@@ -45,8 +45,10 @@ void MX_I2C3_Init(void);
  * those pins are LTDC_G4/G5 when TARS_FEATURE_LCD=1. */
 extern I2C_HandleTypeDef hi2c2;
 void MX_I2C2_Init(void);
-/* Disable I2C2 HW and release PB10/PB11 as OD high (external pull-ups). */
+/* Disable I2C2 HW and release PB10/PB11 as OD high (needs external pull-ups). */
 void MX_I2C2_BusRelease(void);
+/* GPIO bit-bang ≥9 SCL pulses after BusRelease (unstick soft-I2C / stuck SDA). */
+void MX_I2C2_BusUnstick(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

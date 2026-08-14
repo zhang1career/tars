@@ -47,7 +47,9 @@ void MX_TIM10_Init(void);
 void MX_TIM12_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+void TarsTim1_HardwareSafe(void);
+void TarsTim1_StartBaseForAdc(void);
+void TarsTim1_EnsurePwmStarted(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

@@ -35,4 +35,7 @@ int TarsResPwm_LinkSetOffset(int32_t offset_ticks);
 int TarsResPwm_LinkResync(void);
 int TarsResPwm_LinkGetStatus(char *out, uint32_t out_size);
 
+/* Force TIM1 gate outputs off (MOE=0, CCR=0). Shell PWM on pwm0..2 must be idle. */
+int TarsResPwm_Tim1ForceSafe(void);
+
 #endif /* TARS_RES_PWM_H */

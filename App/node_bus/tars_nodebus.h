@@ -56,11 +56,11 @@ typedef struct {
 void          TarsNodeBus_Init(I2C_HandleTypeDef *hi2c);
 
 /*
- * 发现并重建节点表：
- *   1) ARP 收割 PROFILE_FULL 节点（权威）
- *   2) 扫描 0x10..0x2F，纳入未占用地址上的 TARS 节点（lite/静态）
- *   3) 已占用地址若身份不一致 → 置 conflict，不覆盖 ARP 条目
- * 返回节点数（含冲突标记的条目）；<0 为错误。
+ * 发现并重建节点表（只认新池，无旧 FULL 祖父期）：
+ *   1) ARP 收割 PROFILE_FULL（权威；分配仅限 FULL 池 0x40..0x5F）
+ *   2) 扫描 LITE 区 0x10..0x3F → 仅纳入 PROFILE_LITE
+ *   3) 扫描 FULL 池 0x40..0x5F → 仅纳入 PROFILE_FULL
+ * 返回节点数；<0 为错误。
  */
 int           TarsNodeBus_Enumerate(void);
 

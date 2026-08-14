@@ -169,7 +169,29 @@ void MX_I2C2_BusRelease(void)
   gpio.Pull = GPIO_NOPULL;
   gpio.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &gpio);
-  /* OD + ODR=1 => release to external pull-ups (idle high). */
+  /* OD + ODR=1 => release (Hi-Z). Idle HIGH only if external pull-ups present. */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10 | GPIO_PIN_11, GPIO_PIN_SET);
+}
+
+void MX_I2C2_BusUnstick(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+  uint8_t i;
+
+  MX_I2C2_BusRelease();
+  gpio.Pin = GPIO_PIN_10 | GPIO_PIN_11;
+  gpio.Mode = GPIO_MODE_OUTPUT_OD;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &gpio);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10 | GPIO_PIN_11, GPIO_PIN_SET);
+  for (i = 0U; i < 9U; i++)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+    HAL_Delay(1);
+  }
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10 | GPIO_PIN_11, GPIO_PIN_SET);
 }
 
@@ -177,7 +199,7 @@ void MX_I2C2_Init(void)
 {
   GPIO_InitTypeDef gpio = {0};
 
-  MX_I2C2_BusRelease();
+  MX_I2C2_BusUnstick();
 
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_I2C2_CLK_ENABLE();

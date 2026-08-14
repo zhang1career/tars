@@ -26,7 +26,7 @@
 /* FOC PWM timing. The PWM frequency is the single-sourced model value so the
  * controller's internal dt (baked into foc_step_stm32) and the timer always
  * agree. Center-aligned: Fpwm = Ftim / (2*ARR), so ARR = Ftim / (2*Fpwm).
- *   Ftim = APB2 timer clock = 72 MHz; Fpwm = 20 kHz -> ARR = 1800.
+ *   Ftim = APB2 timer clock = 72 MHz; Fpwm = FOC_PARAM_FPWM_HZ -> ARR = Ftim / (2*Fpwm).
  *   RepetitionCounter = 1 -> one update (ADC trigger + control tick) / period.
  * Dead time for external half-bridge (UCC27211 + AOD4184): DTG ticks @ 72 MHz tDTS.
  * 216 ticks ~ 3.0 us — conservative vs sim DT=150 ns + gate Rg; tune if needed. */
@@ -87,7 +87,7 @@ void MX_TIM1_Init(void)
   }
 
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = TARS_FOC_TIM1_ARR / 2U;     /* 50% neutral */
+  sConfigOC.Pulse = 0U;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -118,7 +118,7 @@ void MX_TIM1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
-
+  TarsTim1_HardwareSafe();
   /* USER CODE END TIM1_Init 2 */
 
 }
@@ -240,6 +240,41 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
 }
 
 /* USER CODE BEGIN 1 */
+
+void TarsTim1_HardwareSafe(void)
+{
+  TIM_TypeDef *tim = TIM1;
+
+  tim->CCR1 = 0U;
+  tim->CCR2 = 0U;
+  tim->CCR3 = 0U;
+  tim->CCER = 0U;
+  tim->BDTR &= ~TIM_BDTR_MOE;
+}
+
+void TarsTim1_StartBaseForAdc(void)
+{
+  TarsTim1_HardwareSafe();
+  if (HAL_TIM_Base_Start(&htim1) != HAL_OK)
+  {
+    SET_BIT(htim1.Instance->CR1, TIM_CR1_CEN);
+  }
+}
+
+void TarsTim1_EnsurePwmStarted(void)
+{
+  if ((TIM1->CCER & 0x555U) != 0U)
+  {
+    return;
+  }
+
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+}
 
 /* USER CODE END 1 */
 

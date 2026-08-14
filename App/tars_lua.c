@@ -500,6 +500,15 @@ static int l_tars_nodebus_mux(lua_State *L)
   return 1;
 }
 
+static int l_tars_nodebus_mux_en(lua_State *L)
+{
+  uint8_t addr = (uint8_t)luaL_checkinteger(L, 1);
+  uint8_t en = (uint8_t)luaL_checkinteger(L, 2);
+  tars_status_t st = TarsNodeBus_MuxEnable(addr, en);
+  lua_pushinteger(L, (lua_Integer)st);
+  return 1;
+}
+
 static const luaL_Reg tars_file_methods[] = {
   {"read", l_file_read},
   {"close", l_file_close},
@@ -530,6 +539,7 @@ static int tars_lua_register_api(lua_State *L)
     {"nodebus_count", l_tars_nodebus_count},
     {"nodebus_get", l_tars_nodebus_get},
     {"nodebus_mux", l_tars_nodebus_mux},
+    {"nodebus_mux_en", l_tars_nodebus_mux_en},
     {NULL, NULL}
   };
 

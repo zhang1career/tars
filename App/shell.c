@@ -9,6 +9,8 @@
 #include "tars_mcu.h"
 #include "tars_res_awg.h"
 #include "tars_foc.h"
+#include "tars_hall6.h"
+#include "tars_openloop.h"
 #include "node_bus/tars_nodebus.h"
 #include "usb_device.h"
 #include "usbd_cdc.h"
@@ -766,6 +768,8 @@ static void shell_execute_line(void)
     }
     else if (shell_str_eq(args, "disable"))
     {
+      (void)TarsOpenloop_Enable(0);
+      (void)TarsHall6_Enable(0);
       TarsFoc_Enable(0);
       shell_write_str("motor: disabled (outputs tri-stated)\r\n");
     }
@@ -776,6 +780,268 @@ static void shell_execute_line(void)
       char msg[48];
       (void)snprintf(msg, sizeof(msg), "motor: speed_ref=%.1f rpm\r\n", (double)rpm);
       shell_write_str(msg);
+    }
+    else if (strncmp(args, "hall6 ", 6) == 0)
+    {
+      const char *sub = args + 6;
+      char msg[160];
+
+      if (shell_str_eq(sub, "enable"))
+      {
+        if (TarsHall6_Enable(1) != 0)
+        {
+          shell_write_str("motor hall6: ENABLED (Hall six-step)\r\n");
+        }
+        else
+        {
+          char err_msg[96];
+          (void)snprintf(err_msg, sizeof(err_msg),
+                         "motor hall6: REFUSED err=%d (grant pwm0..2 hall6, motor disable)\r\n",
+                         TarsHall6_LastEnableError());
+          shell_write_str(err_msg);
+        }
+      }
+      else if (shell_str_eq(sub, "disable"))
+      {
+        (void)TarsHall6_Enable(0);
+        shell_write_str("motor hall6: disabled\r\n");
+      }
+      else if (strncmp(sub, "duty ", 5) == 0)
+      {
+        unsigned long pct = strtoul(sub + 5, NULL, 10);
+        if (pct > 8UL)
+        {
+          pct = 8UL;
+        }
+        TarsHall6_SetDutyPct((uint8_t)pct);
+        (void)snprintf(msg, sizeof(msg), "motor hall6: run_duty=%lu%% (max 8)\r\n", pct);
+        shell_write_str(msg);
+      }
+      else if (strncmp(sub, "kickduty ", 9) == 0)
+      {
+        unsigned long pct = strtoul(sub + 9, NULL, 10);
+        if (pct > 8UL)
+        {
+          pct = 8UL;
+        }
+        TarsHall6_SetKickDutyPct((uint8_t)pct);
+        (void)snprintf(msg, sizeof(msg), "motor hall6: kick_duty=%lu%%\r\n", pct);
+        shell_write_str(msg);
+      }
+      else if (strncmp(sub, "phase ", 6) == 0)
+      {
+        unsigned long off = strtoul(sub + 6, NULL, 10);
+        if (off > 5UL)
+        {
+          off = 5UL;
+        }
+        TarsHall6_SetPhaseOffset((uint8_t)off);
+        (void)snprintf(msg, sizeof(msg), "motor hall6: phase=%lu\r\n", off);
+        shell_write_str(msg);
+      }
+      else if (shell_str_eq(sub, "dir cw"))
+      {
+        TarsHall6_SetDirection(0);
+        shell_write_str("motor hall6: dir=cw\r\n");
+      }
+      else if (shell_str_eq(sub, "dir ccw"))
+      {
+        TarsHall6_SetDirection(1);
+        shell_write_str("motor hall6: dir=ccw\r\n");
+      }
+      else if (shell_str_eq(sub, "read"))
+      {
+        uint8_t hall = TarsHall6_ReadHallRaw();
+        (void)snprintf(msg, sizeof(msg), "motor hall6: hall=0x%lx (%lu)\r\n",
+                       (unsigned long)hall, (unsigned long)hall);
+        shell_write_str(msg);
+      }
+      else if (shell_str_eq(sub, "status"))
+      {
+        tars_hall6_snapshot_t s;
+        TarsHall6_GetSnapshot(&s);
+        (void)snprintf(msg, sizeof(msg),
+                       "motor hall6: %s duty=%u%% dir=%s phase=%u hall=%u step=%u fault=%u kick=%u chg=%lu loops=%lu\r\n",
+                       (s.enabled ? "ON" : "off"),
+                       (unsigned)s.duty_pct,
+                       (s.direction ? "ccw" : "cw"),
+                       (unsigned)s.phase,
+                       (unsigned)s.hall_raw,
+                       (unsigned)s.step,
+                       (unsigned)s.fault,
+                       (unsigned)s.kick,
+                       (unsigned long)s.hall_changes,
+                       (unsigned long)s.loop_count);
+        shell_write_str(msg);
+      }
+      else
+      {
+        shell_write_str("motor hall6: enable | disable | duty <pct> | kickduty <pct> | phase <0-5> | dir cw|ccw | read | status\r\n");
+      }
+    }
+    else if (strncmp(args, "openloop ", 9) == 0)
+    {
+      const char *sub = args + 9;
+      char msg[256];
+
+      if (shell_str_eq(sub, "enable"))
+      {
+        if (TarsOpenloop_Enable(1) != 0)
+        {
+          (void)snprintf(msg, sizeof(msg), "motor openloop: ENABLED (%s)\r\n",
+                         (TarsOpenloop_GetMode() == TARS_OPENLOOP_MODE_6STEP) ? "6-step" : "3-step");
+          shell_write_str(msg);
+        }
+        else
+        {
+          (void)snprintf(msg, sizeof(msg),
+                         "motor openloop: REFUSED err=%d (grant pwm0..2 openloop, motor disable)\r\n",
+                         TarsOpenloop_LastEnableError());
+          shell_write_str(msg);
+        }
+      }
+      else if (shell_str_eq(sub, "disable"))
+      {
+        (void)TarsOpenloop_Enable(0);
+        shell_write_str("motor openloop: disabled\r\n");
+      }
+      else if (strncmp(sub, "duty ", 5) == 0)
+      {
+        unsigned long pct = strtoul(sub + 5, NULL, 10);
+        if (pct > 10UL)
+        {
+          pct = 10UL;
+        }
+        TarsOpenloop_SetDutyPct((uint8_t)pct);
+        (void)snprintf(msg, sizeof(msg), "motor openloop: duty=%lu%%\r\n", pct);
+        shell_write_str(msg);
+      }
+      else if (shell_str_eq(sub, "sync on"))
+      {
+        TarsOpenloop_SetHallSync(1);
+        shell_write_str("motor openloop: sync=hall (6-step on Hall edges)\r\n");
+      }
+      else if (shell_str_eq(sub, "sync off"))
+      {
+        TarsOpenloop_SetHallSync(0);
+        shell_write_str("motor openloop: sync=off (timer step)\r\n");
+      }
+      else if (strncmp(sub, "phase ", 6) == 0)
+      {
+        unsigned long ph = strtoul(sub + 6, NULL, 10);
+        TarsOpenloop_SetHallPhase((uint8_t)ph);
+        (void)snprintf(msg, sizeof(msg), "motor openloop: hall_phase=%lu\r\n", ph % 6UL);
+        shell_write_str(msg);
+      }
+      else if (strncmp(sub, "ramp ", 5) == 0)
+      {
+        unsigned long start_ms = strtoul(sub + 5, NULL, 10);
+        const char *p = strchr(sub + 5, ' ');
+        unsigned long end_ms = 45UL;
+        unsigned long ramp_ms = 0UL;
+        if (p != NULL)
+        {
+          end_ms = strtoul(p + 1, NULL, 10);
+          p = strchr(p + 1, ' ');
+          if (p != NULL)
+          {
+            ramp_ms = strtoul(p + 1, NULL, 10);
+          }
+        }
+        TarsOpenloop_SetRampMs((uint16_t)start_ms, (uint16_t)end_ms, (uint16_t)ramp_ms);
+        (void)snprintf(msg, sizeof(msg),
+                       "motor openloop: ramp=%lu->%lums over %lums\r\n",
+                       start_ms, end_ms, ramp_ms);
+        shell_write_str(msg);
+      }
+      else if (strncmp(sub, "step ", 5) == 0)
+      {
+        unsigned long ms = strtoul(sub + 5, NULL, 10);
+        TarsOpenloop_SetStepMs((uint16_t)ms);
+        (void)snprintf(msg, sizeof(msg), "motor openloop: step=%lums\r\n", ms);
+        shell_write_str(msg);
+      }
+      else if (strncmp(sub, "mode ", 5) == 0)
+      {
+        unsigned long mode = strtoul(sub + 5, NULL, 10);
+        if (mode == 6UL)
+        {
+          TarsOpenloop_SetMode(TARS_OPENLOOP_MODE_6STEP);
+          shell_write_str("motor openloop: mode=6step\r\n");
+        }
+        else
+        {
+          TarsOpenloop_SetMode(TARS_OPENLOOP_MODE_3STEP);
+          shell_write_str("motor openloop: mode=3step\r\n");
+        }
+      }
+      else if (shell_str_eq(sub, "dir cw"))
+      {
+        TarsOpenloop_SetDirection(0);
+        shell_write_str("motor openloop: dir=cw\r\n");
+      }
+      else if (shell_str_eq(sub, "dir ccw"))
+      {
+        TarsOpenloop_SetDirection(1);
+        shell_write_str("motor openloop: dir=ccw\r\n");
+      }
+      else if (shell_str_eq(sub, "status"))
+      {
+        tars_openloop_snapshot_t s;
+        static const char *names3[3] = { "Y/pwm0", "G/pwm1", "B/pwm2" };
+        static const char *names6[6] = { "seq0", "seq1", "seq2", "seq3", "seq4", "seq5" };
+        const char *spin = "unk";
+        TarsOpenloop_GetSnapshot(&s);
+        if (s.hall_spin > 0)
+        {
+          spin = "ccw";
+        }
+        else if (s.hall_spin < 0)
+        {
+          spin = "cw";
+        }
+        if (s.mode == TARS_OPENLOOP_MODE_6STEP)
+        {
+          (void)snprintf(msg, sizeof(msg),
+                         "motor openloop: %s mode=6step duty=%u%% step=%u(%s) dir=%s steps=%lu loops=%lu\r\n"
+                         "  hall=0x%x spin=%s sync=%u inv=%u lock=%u\r\n",
+                         (s.enabled ? "ON" : "off"),
+                         (unsigned)s.duty_pct,
+                         (unsigned)s.step,
+                         names6[s.step % 6U],
+                         (s.direction ? "ccw" : "cw"),
+                         (unsigned long)s.step_count,
+                         (unsigned long)s.loop_count,
+                         (unsigned)s.hall_raw,
+                         spin,
+                         (unsigned)s.hall_sync_on,
+                         (unsigned)s.hall_invert,
+                         (unsigned)s.hall_locked);
+        }
+        else
+        {
+          (void)snprintf(msg, sizeof(msg),
+                         "motor openloop: %s mode=3step duty=%u%% step=%u(%s) dir=%s steps=%lu loops=%lu\r\n"
+                         "  hall=0x%x spin=%s sync=%u inv=%u lock=%u\r\n",
+                         (s.enabled ? "ON" : "off"),
+                         (unsigned)s.duty_pct,
+                         (unsigned)s.step,
+                         names3[s.step % 3U],
+                         (s.direction ? "ccw" : "cw"),
+                         (unsigned long)s.step_count,
+                         (unsigned long)s.loop_count,
+                         (unsigned)s.hall_raw,
+                         spin,
+                         (unsigned)s.hall_sync_on,
+                         (unsigned)s.hall_invert,
+                         (unsigned)s.hall_locked);
+        }
+        shell_write_str(msg);
+      }
+      else
+      {
+        shell_write_str("motor openloop: enable | disable | duty <pct> | step <ms> | ramp <s> <e> <ms> | sync on|off | phase <0-5> | mode 3|6 | dir cw|ccw | status\r\n");
+      }
     }
     else if (shell_str_eq(args, "cal"))
     {
@@ -800,7 +1066,7 @@ static void shell_execute_line(void)
     }
     else
     {
-      shell_write_str("motor: enable | disable | speed <rpm> | cal | status\r\n");
+      shell_write_str("motor: enable | disable | speed <rpm> | cal | status | hall6 ...\r\n");
     }
   }
   else if (strncmp(s_line, "nodebus", 7) == 0 &&
