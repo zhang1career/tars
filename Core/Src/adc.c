@@ -8,10 +8,12 @@
   *   Rank 1: IN11 (PC1)  ia
   *   Rank 2: IN13 (PC3)  ib
   *   Rank 3: IN14 (PC4)  ic
-  *   Rank 4: IN15 (PC5)  vdc
   *
-  *   ADCCLK = PCLK2 / 4 = 72/4 = 18 MHz. Sampling time is a placeholder
-  *   (15 cycles) — tune to the shunt-amp output impedance during bring-up.
+  *   Vdc is not sampled (bench uses a fixed 12 V nominal). Three-rank injected
+  *   at 3-cycle sample / 36 MHz ADCCLK finishes in ~1.3 us so 7% PWM pulses
+  *   (~3.5 us at 20 kHz center-aligned) are still high during S&H.
+  *
+  *   ADCCLK = PCLK2 / 2 = 36 MHz.
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -25,7 +27,7 @@ void MX_ADC1_Init(void)
   ADC_InjectionConfTypeDef sConfigInjected = {0};
 
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.ScanConvMode = ENABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
@@ -41,9 +43,9 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /* Injected group: 4 conversions, hardware-triggered by TIM1 TRGO. */
-  sConfigInjected.InjectedNbrOfConversion = 4;
-  sConfigInjected.InjectedSamplingTime = ADC_SAMPLETIME_15CYCLES;
+  /* Injected group: 3 phase currents, hardware-triggered by TIM1 TRGO. */
+  sConfigInjected.InjectedNbrOfConversion = 3;
+  sConfigInjected.InjectedSamplingTime = ADC_SAMPLETIME_3CYCLES;
   sConfigInjected.ExternalTrigInjecConvEdge = ADC_EXTERNALTRIGINJECCONVEDGE_RISING;
   sConfigInjected.ExternalTrigInjecConv = ADC_EXTERNALTRIGINJECCONV_T1_TRGO;
   sConfigInjected.AutoInjectedConv = DISABLE;
@@ -66,13 +68,6 @@ void MX_ADC1_Init(void)
 
   sConfigInjected.InjectedChannel = ADC_CHANNEL_14; /* PC4 - ic */
   sConfigInjected.InjectedRank = 3;
-  if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  sConfigInjected.InjectedChannel = ADC_CHANNEL_15; /* PC5 - vdc */
-  sConfigInjected.InjectedRank = 4;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {
     Error_Handler();

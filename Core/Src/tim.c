@@ -27,7 +27,7 @@
  * controller's internal dt (baked into foc_step_stm32) and the timer always
  * agree. Center-aligned: Fpwm = Ftim / (2*ARR), so ARR = Ftim / (2*Fpwm).
  *   Ftim = APB2 timer clock = 72 MHz; Fpwm = FOC_PARAM_FPWM_HZ -> ARR = Ftim / (2*Fpwm).
- *   RepetitionCounter = 1 -> one update (ADC trigger + control tick) / period.
+ *   RepetitionCounter = 0 -> one update (ADC trigger + control tick) / PWM period.
  * Dead time for external half-bridge (UCC27211 + AOD4184): DTG ticks @ 72 MHz tDTS.
  * 216 ticks ~ 3.0 us — conservative vs sim DT=150 ns + gate Rg; tune if needed. */
 #define TARS_FOC_TIM1_CLK_HZ     72000000U
@@ -73,7 +73,7 @@ void MX_TIM1_Init(void)
   htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
   htim1.Init.Period = TARS_FOC_TIM1_ARR;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 1;
+  htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
@@ -268,6 +268,28 @@ void TarsTim1_EnsurePwmStarted(void)
     return;
   }
 
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+}
+
+void TarsTim1_ArmFocPwm(void)
+{
+  /* Hall6/kickstart commutation leaves CCER in a non-FOC pattern; force re-init. */
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+  (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+  (void)HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+  TarsTim1_HardwareSafe();
+  if ((htim1.Instance->CR1 & TIM_CR1_CEN) == 0U)
+  {
+    (void)HAL_TIM_Base_Start(&htim1);
+  }
   (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   (void)HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
   (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);

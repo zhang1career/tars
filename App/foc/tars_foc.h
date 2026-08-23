@@ -56,6 +56,18 @@ void TarsFoc_BootHw(void);
 /* Control surface (thread-safe). */
 void TarsFoc_SetSpeedRef(float rpm);
 
+void TarsFoc_SetHallAssist(int enable);
+void TarsFoc_SetHallPhase(uint8_t offset);
+int  TarsFoc_HallAssistEnabled(void);
+
+/* Hall-FOC bench: permute ADC ia/ib/ic only (PWM stays Y/G/B = CH1/2/3). */
+void    TarsFoc_SetPhaseRemap(uint8_t map);
+uint8_t TarsFoc_GetPhaseRemap(void);
+
+/* Physical shunt currents from ADC ranks (no remap). Safe during hall6. */
+void TarsFoc_SamplePhaseCurrents(float *ia, float *ib, float *ic);
+void TarsFoc_GetCalOffsets(uint16_t *ia, uint16_t *ib, uint16_t *ic, uint16_t *cal_left);
+
 /* Enable/disable the controller. Returns 1 if the resulting state matches the
  * request, 0 if enabling was refused (TIM1 held by a peer function, e.g. shell
  * PWM). Disabling always returns 1. */

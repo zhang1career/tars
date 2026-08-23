@@ -856,6 +856,52 @@ static void shell_execute_line(void)
                        (unsigned long)hall, (unsigned long)hall);
         shell_write_str(msg);
       }
+      else if (shell_str_eq(sub, "imap"))
+      {
+        uint32_t n[7];
+        int32_t ia[7];
+        int32_t ib[7];
+        int32_t ic[7];
+        uint32_t ccer;
+        uint32_t bdtr;
+        uint32_t ccr1;
+        uint32_t ccr2;
+        uint32_t ccr3;
+        uint16_t off_a;
+        uint16_t off_b;
+        uint16_t off_c;
+        uint16_t cal_left;
+        uint8_t h;
+        static const char *pat[7] = {
+          "",
+          "Y+B-",
+          "G+Y-",
+          "G+B-",
+          "B+G-",
+          "Y+G-",
+          "B+Y-"
+        };
+
+        TarsHall6_ImapGet(n, ia, ib, ic);
+        TarsHall6_GetTim1Gate(&ccer, &bdtr, &ccr1, &ccr2, &ccr3);
+        TarsFoc_GetCalOffsets(&off_a, &off_b, &off_c, &cal_left);
+        (void)snprintf(msg, sizeof(msg),
+                       "motor hall6 imap: moe=%u ccer=0x%lx ccr=%lu/%lu/%lu cal=%u off=%u/%u/%u\r\n",
+                       (unsigned)((bdtr & 0x8000U) != 0U),
+                       (unsigned long)ccer,
+                       (unsigned long)ccr1, (unsigned long)ccr2, (unsigned long)ccr3,
+                       (unsigned)cal_left,
+                       (unsigned)off_a, (unsigned)off_b, (unsigned)off_c);
+        shell_write_str(msg);
+        for (h = 1U; h <= 6U; h++)
+        {
+          (void)snprintf(msg, sizeof(msg),
+                         "  H%u %-5s n=%lu raw=%ld/%ld/%ld\r\n",
+                         (unsigned)h, pat[h], (unsigned long)n[h],
+                         (long)ia[h], (long)ib[h], (long)ic[h]);
+          shell_write_str(msg);
+        }
+      }
       else if (shell_str_eq(sub, "status"))
       {
         tars_hall6_snapshot_t s;
@@ -876,7 +922,7 @@ static void shell_execute_line(void)
       }
       else
       {
-        shell_write_str("motor hall6: enable | disable | duty <pct> | kickduty <pct> | phase <0-5> | dir cw|ccw | read | status\r\n");
+        shell_write_str("motor hall6: enable | disable | duty <pct> | kickduty <pct> | phase <0-5> | dir cw|ccw | read | status | imap\r\n");
       }
     }
     else if (strncmp(args, "openloop ", 9) == 0)
@@ -1043,6 +1089,50 @@ static void shell_execute_line(void)
         shell_write_str("motor openloop: enable | disable | duty <pct> | step <ms> | ramp <s> <e> <ms> | sync on|off | phase <0-5> | mode 3|6 | dir cw|ccw | status\r\n");
       }
     }
+    else if (strncmp(args, "hall ", 5) == 0)
+    {
+      const char *sub = args + 5;
+      char msg[64];
+
+      if (shell_str_eq(sub, "on"))
+      {
+        TarsFoc_SetHallAssist(1);
+        shell_write_str("motor: hall assist ON (skip sensorless PLL)\r\n");
+      }
+      else if (shell_str_eq(sub, "off"))
+      {
+        TarsFoc_SetHallAssist(0);
+        shell_write_str("motor: hall assist OFF (sensorless)\r\n");
+      }
+      else if (strncmp(sub, "phase ", 6) == 0)
+      {
+        unsigned long off = strtoul(sub + 6, NULL, 10);
+        if (off > 5UL)
+        {
+          off = 5UL;
+        }
+        TarsFoc_SetHallPhase((uint8_t)off);
+        (void)snprintf(msg, sizeof(msg), "motor: hall phase=%lu\r\n", off);
+        shell_write_str(msg);
+      }
+      else
+      {
+        shell_write_str("motor hall: on | off | phase <0-5>\r\n");
+      }
+    }
+    else if (strncmp(args, "remap ", 6) == 0)
+    {
+      char msg[96];
+      unsigned long m = strtoul(args + 6, NULL, 10);
+      if (m > 5UL)
+      {
+        m = 5UL;
+      }
+      TarsFoc_SetPhaseRemap((uint8_t)m);
+      (void)snprintf(msg, sizeof(msg),
+                     "motor: current remap=%lu (PWM stays Y/G/B; 0=abc 1=acb 2=bac 3=bca 4=cab 5=cba)\r\n", m);
+      shell_write_str(msg);
+    }
     else if (shell_str_eq(args, "cal"))
     {
       TarsFoc_Calibrate();
@@ -1066,7 +1156,7 @@ static void shell_execute_line(void)
     }
     else
     {
-      shell_write_str("motor: enable | disable | speed <rpm> | cal | status | hall6 ...\r\n");
+      shell_write_str("motor: enable | disable | speed <rpm> | cal | remap <0-5> | hall on|off|phase | status | hall6 ...\r\n");
     }
   }
   else if (strncmp(s_line, "nodebus", 7) == 0 &&

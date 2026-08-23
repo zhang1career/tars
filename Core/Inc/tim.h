@@ -50,6 +50,7 @@ void MX_TIM12_Init(void);
 void TarsTim1_HardwareSafe(void);
 void TarsTim1_StartBaseForAdc(void);
 void TarsTim1_EnsurePwmStarted(void);
+void TarsTim1_ArmFocPwm(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

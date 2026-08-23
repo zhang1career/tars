@@ -90,13 +90,37 @@ static void nb_clear_af(void)
   }
 }
 
+/* Poll BUSY down for up to ms; returns 1 if the cell is still busy. */
+static uint8_t nb_wait_bus_free(uint32_t ms)
+{
+  uint32_t t0 = HAL_GetTick();
+
+  if (s_hi2c == NULL)
+  {
+    return 0U;
+  }
+  while (__HAL_I2C_GET_FLAG(s_hi2c, I2C_FLAG_BUSY) != RESET)
+  {
+    if ((HAL_GetTick() - t0) >= ms)
+    {
+      return 1U;
+    }
+  }
+  return 0U;
+}
+
 static tars_status_t nb_after_hal_fail(void)
 {
   if ((s_hi2c != NULL) && (s_hi2c->ErrorCode == HAL_I2C_ERROR_AF))
   {
     nb_clear_af();
-    /* NACK is normal on empty addresses; recover only if HW still BUSY. */
-    if (__HAL_I2C_GET_FLAG(s_hi2c, I2C_FLAG_BUSY) != RESET)
+    /*
+     * NACK is normal on empty addresses. BUSY is often still set for the tail
+     * of the STOP the cell just generated, so let it drain before concluding
+     * the bus is wedged — sampling the flag immediately made every absent
+     * address pay a full DeInit/unstick/re-init (~75 ms an address on a sweep).
+     */
+    if (nb_wait_bus_free(3U) != 0U)
     {
       nb_bus_recover();
     }
@@ -226,6 +250,26 @@ tars_status_t TarsNodeBus_WriteReg(uint8_t addr, uint8_t reg, const uint8_t *buf
   return TARS_OK;
 }
 
+/*
+ * 在线探测：走 LITE 合法时序（写指针 + STOP + 间隔 + 读），不要用
+ * HAL_I2C_IsDeviceReady。后者发的是不带数据的纯地址帧，ATtiny 软 I2C 从机
+ * 既不应答，还会因此丢掉位同步，连累下一次事务失败。
+ *
+ * 返回 TARS_OK 表示该地址有应答；*proto 为读回的 TNB_REG_PROTO_VER。
+ * 应答但 *proto == 0 的不是节点：SDA 被拉死时每个地址都“应答”且读回全 0。
+ */
+static tars_status_t nb_probe_addr(uint8_t a, uint8_t *proto)
+{
+  uint8_t v = 0U;
+  tars_status_t st = TarsNodeBus_ReadReg(a, TNB_REG_PROTO_VER, &v, 1U);
+
+  if (proto != NULL)
+  {
+    *proto = v;
+  }
+  return st;
+}
+
 /* ---- 地址池 ---- */
 static uint8_t addr_in_use(uint8_t addr)
 {
@@ -263,17 +307,17 @@ static uint8_t alloc_addr(uint8_t preferred)
 static void enumerate_try_addr(uint8_t a, uint8_t expect_profile)
 {
   tars_node_t probe;
+  uint8_t proto = 0U;
 
   if (s_count >= TARS_NODEBUS_MAX_NODES)
   {
     return;
   }
-  if (HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 1U, 20U) != HAL_OK)
+  if ((nb_probe_addr(a, &proto) != TARS_OK) || (proto == 0U))
   {
-    nb_clear_af();
     return;
   }
-  /* Let soft-I2C leave any partial txn from the ready probe before identity. */
+  /* Let soft-I2C settle between the presence frame and the identity window. */
   HAL_Delay(5);
   memset(&probe, 0, sizeof(probe));
   if (TarsNodeBus_ReadIdentity(a, &probe) != TARS_OK)
@@ -310,9 +354,6 @@ int TarsNodeBus_Enumerate(void)
   /*
    * Skip General-Call / ARP for now: LITE ignores them, and the NACK +
    * recover sequence desyncs ATtiny soft-I2C before identity reads succeed.
-   *
-   * Prefer IsDeviceReady (same as probe) before touching ReadReg — empty-addr
-   * Master_Transmit storms were still upsetting the soft slave.
    *
    * LITE 烧录区 0x10..0x3F → PROFILE_LITE only；
    * FULL 池 0x40..0x5F → PROFILE_FULL only（不兼容旧 FULL 占 0x10..0x2F）。
@@ -836,8 +877,8 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
     uint32_t used = 0U;
     uint8_t a;
     uint16_t ack = 0U;
+    uint16_t zero_run = 0U;
     uint32_t idr;
-    HAL_StatusTypeDef st;
 
     if (s_hi2c == NULL)
     {
@@ -854,30 +895,41 @@ void TarsNodeBus_ShellCmd(const char *args, char *out, uint32_t out_size)
                                (unsigned)((idr >> 11) & 1U),
                                (unsigned)(__HAL_I2C_GET_FLAG(s_hi2c, I2C_FLAG_BUSY) != RESET),
                                (unsigned long)s_hi2c->ErrorCode);
-    for (a = 0x08U; (a < 0x78U) && (used + 8U < out_size); a++)
+    for (a = 0x08U; (a < 0x78U) && (used + 40U < out_size); a++)
     {
+      uint8_t proto = 0U;
+
       if (nb_bus_needs_recover() != 0U)
       {
         nb_bus_recover();
       }
-      st = HAL_I2C_IsDeviceReady(s_hi2c, (uint16_t)(a << 1), 1U, 20U);
-      if (st == HAL_OK)
+      if (nb_probe_addr(a, &proto) != TARS_OK)
       {
-        used += (uint32_t)snprintf(out + used, out_size - used, "  ACK 0x%02X\r\n", a);
-        ack++;
-        /* SDA stuck low → every addr ACKs; stop and recover. */
-        if (ack >= 3U)
-        {
-          nb_bus_recover();
-          used += (uint32_t)snprintf(out + used, out_size - used,
-                                     "  (abort: likely SDA stuck low)\r\n");
-          break;
-        }
+        zero_run = 0U;
+        /* LITE 要求 STOP 后留间隔，空地址也照给，否则会打乱软 I2C 从机。 */
+        HAL_Delay(1);
+        continue;
       }
-      else if (st != HAL_ERROR)
+      if (proto != 0U)
       {
-        /* Timeout/busy: clear before next address. */
+        used += (uint32_t)snprintf(out + used, out_size - used,
+                                   "  ACK 0x%02X proto=0x%02X\r\n", a, proto);
+        ack++;
+        zero_run = 0U;
+        continue;
+      }
+      /*
+       * 应答但读回 0x00：SDA 被拉死时每个地址都会这样。连续多个才判卡死——
+       * 相邻地址上挂着几块真板子是正常的（如 0x13..0x16）。
+       */
+      zero_run++;
+      if (zero_run >= 8U)
+      {
         nb_bus_recover();
+        used += (uint32_t)snprintf(out + used, out_size - used,
+                                   "  (abort: SDA stuck low, 0x%02X.. all read 0x00)\r\n",
+                                   (unsigned)(a + 1U - zero_run));
+        break;
       }
     }
     if (ack == 0U)

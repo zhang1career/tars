@@ -64,6 +64,8 @@ static uint8_t s_phase_offset;
 static uint8_t s_kick_duty_pct;
 static uint8_t s_run_duty_pct;
 static uint8_t s_moe_pending;
+static uint32_t s_imap_n[7];
+static uint32_t s_imap_raw[7][3];
 
 /* Electrical rotation order (120 deg Hall). */
 static const uint8_t s_seq_cw[6] = { 5U, 1U, 3U, 2U, 6U, 4U };
@@ -82,6 +84,90 @@ static void hall6_store(const tars_hall6_snapshot_t *src)
 
 static void hall6_commutate(uint8_t hall);
 static void hall6_moe_release(void);
+
+static void hall6_imap_reset(void)
+{
+  uint8_t i;
+
+  for (i = 0U; i < 7U; i++)
+  {
+    s_imap_n[i] = 0U;
+    s_imap_raw[i][0] = 0U;
+    s_imap_raw[i][1] = 0U;
+    s_imap_raw[i][2] = 0U;
+  }
+}
+
+static void hall6_imap_add(uint8_t table_hall)
+{
+  if ((table_hall < 1U) || (table_hall > 6U))
+  {
+    return;
+  }
+  /* Center-aligned TRGO fires at trough and peak. Keep trough only
+   * (DIR=0, counting up): high-side ON window for PWM1. */
+  if ((htim1.Instance->CR1 & TIM_CR1_DIR) != 0U)
+  {
+    return;
+  }
+
+  s_imap_raw[table_hall][0] += (uint32_t)HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+  s_imap_raw[table_hall][1] += (uint32_t)HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+  s_imap_raw[table_hall][2] += (uint32_t)HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
+  s_imap_n[table_hall]++;
+}
+
+void TarsHall6_ImapReset(void)
+{
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  hall6_imap_reset();
+  if (primask == 0U)
+  {
+    __enable_irq();
+  }
+}
+
+void TarsHall6_ImapGet(uint32_t n[7], int32_t raw_a[7], int32_t raw_b[7], int32_t raw_c[7])
+{
+  uint8_t i;
+  uint32_t primask = __get_PRIMASK();
+
+  __disable_irq();
+  for (i = 0U; i < 7U; i++)
+  {
+    uint32_t c = s_imap_n[i];
+    n[i] = c;
+    if (c == 0U)
+    {
+      raw_a[i] = 0;
+      raw_b[i] = 0;
+      raw_c[i] = 0;
+    }
+    else
+    {
+      raw_a[i] = (int32_t)(s_imap_raw[i][0] / c);
+      raw_b[i] = (int32_t)(s_imap_raw[i][1] / c);
+      raw_c[i] = (int32_t)(s_imap_raw[i][2] / c);
+    }
+  }
+  if (primask == 0U)
+  {
+    __enable_irq();
+  }
+}
+
+void TarsHall6_GetTim1Gate(uint32_t *ccer, uint32_t *bdtr,
+                           uint32_t *ccr1, uint32_t *ccr2, uint32_t *ccr3)
+{
+  TIM_TypeDef *tim = htim1.Instance;
+
+  if (ccer != 0) { *ccer = tim->CCER; }
+  if (bdtr != 0) { *bdtr = tim->BDTR; }
+  if (ccr1 != 0) { *ccr1 = tim->CCR1; }
+  if (ccr2 != 0) { *ccr2 = tim->CCR2; }
+  if (ccr3 != 0) { *ccr3 = tim->CCR3; }
+}
 
 static void hall6_init_gpio(void)
 {
@@ -426,18 +512,10 @@ int TarsHall6_Enable(int enable)
       return 0;
     }
 
-    if (hall6_start_tim1_pwm() == 0)
-    {
-      s_last_enable_err = 4;
-      (void)TarsResMgr_Release("pwm0");
-      (void)TarsResMgr_Release("pwm1");
-      (void)TarsResMgr_Release("pwm2");
-      TarsResMgr_TimDomainRelease("tim1", TARS_HALL6_TENANT);
-      return 0;
-    }
-
     s_moe_pending = 1U;
     TarsTim1_HardwareSafe();
+    (void)hall6_start_tim1_pwm();
+    hall6_imap_reset();
 
     s_enable = 1U;
     s_last_hall = 0xFFU;
@@ -457,6 +535,10 @@ int TarsHall6_Enable(int enable)
       hall6_store(&snap);
       hall6_kick_begin(hall);
       hall6_commutate(mapped);
+      if (s_moe_pending != 0U)
+      {
+        hall6_moe_release();
+      }
     }
     return 1;
   }
@@ -533,4 +615,5 @@ void TarsHall6_ControlLoopISR(void)
   snap.phase = s_phase_offset;
   snap.loop_count++;
   hall6_store(&snap);
+  hall6_imap_add(hall6_map_hall(hall));
 }

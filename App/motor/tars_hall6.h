@@ -33,6 +33,11 @@ void TarsHall6_SetDirection(int ccw); /* 0=CW, 1=CCW */
 void TarsHall6_GetSnapshot(tars_hall6_snapshot_t *out);
 uint8_t TarsHall6_ReadHallRaw(void);
 
+void TarsHall6_ImapReset(void);
+void TarsHall6_ImapGet(uint32_t n[7], int32_t raw_a[7], int32_t raw_b[7], int32_t raw_c[7]);
+void TarsHall6_GetTim1Gate(uint32_t *ccer, uint32_t *bdtr,
+                           uint32_t *ccr1, uint32_t *ccr2, uint32_t *ccr3);
+
 /* 20 kHz entry (same cadence as FOC ADC ISR). */
 void TarsHall6_ControlLoopISR(void);
 
